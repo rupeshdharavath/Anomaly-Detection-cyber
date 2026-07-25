@@ -11,7 +11,6 @@ build/
 dist/
 *.egg-info/
 *.egg
-.python-version
 
 # Jupyter
 .ipynb_checkpoints/
@@ -48,6 +47,8 @@ app/frontend/build/
 .env
 .env.*
 
-# Trained models / datasets
-trained_models/
-/data/processed/
+# NOTE: trained_models/ and data/processed/ are intentionally
+# NOT ignored anymore, so model artifacts (lstm_model.keras,
+# baseline_profile.pkl, scaler.pkl, feature_columns.pkl) and
+# processed datasets get committed and are available to anyone
+# who clones the repo.
