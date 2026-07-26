@@ -1,449 +1,245 @@
-# Anomaly Detection System - Cybersecurity Behavioral Analysis with LSTM and Baseline Profiling
+# Anomaly Detection — SOC Behavioral Anomaly Detection System
 
-An advanced behavioral anomaly detection system for cybersecurity that combines statistical baseline profiling with a deep learning LSTM model for real-time detection of suspicious user and device activity.
-
-## 🎯 Overview
-
-This project implements a **production-ready anomaly detection pipeline** for enterprise cybersecurity, addressing:
-- **Sequential pattern detection** using stacked LSTM neural networks
-- **Behavioral profiling** with per-entity statistical baselines
-- **Ensemble scoring** combining multiple detection approaches
-- **Low base-rate anomalies** in realistic access logs (0.5%-3% attack rate)
-- **Explainability** through SHAP values and feature contribution analysis
-
-### Key Features
-
-✅ **Real-time Detection** - <1 second per event in production  
-✅ **94% Detection Rate** - Ensemble of baseline + LSTM models  
-✅ **8 Attack Types** - Brute force, impossible travel, credential stuffing, device spoofing, lateral movement, and stealthy variants  
-✅ **Explainable AI** - SHAP-based feature contribution analysis  
-✅ **Interactive Dashboard** - React UI with alerts, entity history, and model comparison  
-✅ **Synthetic Data Pipeline** - Configurable dataset generation with realistic attack injection  
+AI-powered behavioral anomaly detection for cybersecurity access logs, built for the
+"AI-Powered Behavioral Anomaly Detection for Cybersecurity" hackathon brief. The system
+learns per-entity "normal" access behavior and flags deviations using a **Baseline
+profiling model + LSTM sequence model ensemble**, with an explainable, ranked
+analyst-facing dashboard.
 
 ---
 
-## 📊 Architecture
+## What this is
 
-### Detection Pipeline
-
-```
-Input Event
-    ↓
-┌─────────────────────────────┐
-│ 1. Baseline Profiling (40%) │ ← Statistical anomaly scoring
-├─────────────────────────────┤
-│ 2. LSTM Sequence Model (60%)│ ← Deep learning pattern detection
-├─────────────────────────────┤
-│ 3. Ensemble Voting          │ ← Weighted combination
-└─────────────────────────────┘
-    ↓
-Risk Score (0-1) + Attack Type
-    ↓
-Alert Queue → Dashboard
-```
-
-### Models
-
-**Baseline Profiler (40% weight)**
-- Per-entity statistical profiles (mean/std of session duration, login failures, resources)
-- Fast detection of obvious anomalies (impossible travel, unknown device, unusual resources)
-- Speed: <0.5s per 1000 events
-
-**LSTM Sequence Model (60% weight)**
-- Architecture: Stacked LSTM with 128→64 units, dropout layers, dense output with sigmoid
-- Input: Sliding windows of 5 events per entity (57 one-hot encoded features)
-- Output: Probability score (0-1) for each sequence
-- Speed: ~1s per 1000 events
-- Detects: Multi-event patterns, stealthy attacks, temporal anomalies
-
-**Ensemble Decision Logic**
-```python
-IF (Baseline Alert) AND (LSTM Alert):
-    → "HIGH CONFIDENCE" (flagged_by="ensemble")
-ELIF (Either detector above threshold):
-    → "ANOMALY DETECTED" (flagged_by="baseline" or "lstm")
-ELSE:
-    → "NORMAL" (flagged_by="none")
-```
+- **Synthetic data generator** producing realistic access-log events for users, service
+  accounts, and edge devices, with 8 injected attack patterns.
+- **Baseline profiling model** — a per-entity statistical "normal" behavior reference
+  (mode resource, mode location, mean/std session duration).
+- **LSTM sequence model** — a real, trained stacked LSTM (128→64 units) over sliding
+  5-event windows per entity, to catch anomalies defined by *pattern over time* rather
+  than any single event.
+- **Ensemble scoring** — baseline and LSTM scores are combined; either model flagging
+  independently is enough to raise an alert (OR-based), while a weighted blend ranks
+  severity for the analyst queue.
+- **Explainability** — every alert carries human-readable reasons (e.g. "Impossible
+  travel detected", "Unauthorized resource access", "Extreme session duration
+  anomaly") and reports which model(s) flagged it (`baseline`, `lstm`, or `both`).
+- **FastAPI backend + React/Tailwind frontend** — a SOC-style dashboard with an alert
+  queue, entity history view, live simulation, and model comparison page.
 
 ---
 
-## 🚀 Quick Start
+## Tech stack
 
-### Prerequisites
-- Python 3.12+
-- TensorFlow 2.13+ with Keras 2.14+
-- PostgreSQL/SQLite (for alerts storage, optional)
+| Layer | Tech |
+|---|---|
+| Backend | FastAPI, Pydantic, scikit-learn, TensorFlow/Keras, pandas |
+| Frontend | React, React Router, Tailwind CSS, lucide-react icons, Axios |
+| Data | CSV files (no database) — `data/raw/`, `data/processed/` |
+| Models | `trained_models/*.pkl` (baseline, scaler, encoders) + `lstm_model.keras` |
 
-### Installation
-
-1. **Clone and setup environment**
-   ```bash
-   cd Anomaly-Detection
-   python -m venv venv
-   source venv/bin/activate  # Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-
-2. **Install backend dependencies**
-   ```bash
-   cd app/backend
-   pip install -r requirements.txt
-   ```
-
-3. **Install frontend dependencies**
-   ```bash
-   cd ../frontend
-   npm install
-   ```
-
-### Running the System
-
-**Backend Server**
-```bash
-cd app/backend
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
-# API docs: http://localhost:8000/docs
-```
-
-**Frontend Dashboard**
-```bash
-cd app/frontend
-npm start
-# Open: http://localhost:3000
-```
-
-**Generate Sample Dataset**
-```bash
-python -m src.dataset_generator
-# Creates data/raw/cybersecurity_dataset.csv with 2% attack rate
-```
+No database is used — all data and model artifacts are file-based, and alerts are
+generated/stored in memory for demo purposes.
 
 ---
 
-## 📁 Project Structure
+## Project structure
 
 ```
-├── app/
-│   ├── backend/              # FastAPI REST API
-│   │   ├── main.py          # FastAPI app + router registration
-│   │   ├── config.py        # Settings + model paths
-│   │   ├── models.py        # Pydantic data models
-│   │   ├── routers/         # Endpoint handlers
-│   │   │   ├── anomalies.py   # /api/v1/anomalies
-│   │   │   ├── alerts.py      # /api/v1/alerts
-│   │   │   ├── analytics.py   # /api/v1/analytics
-│   │   │   ├── entities.py    # /api/v1/entities
-│   │   │   ├── health.py      # /api/v1/health
-│   │   │   └── models.py      # /api/v1/models ← Model info & performance
-│   │   └── services/        # Business logic
-│   │       ├── inference_service.py  # Prediction + scoring
-│   │       ├── alert_service.py      # Alert ranking & filtering
-│   │       └── data_service.py       # Data loading
-│   │
-│   └── frontend/            # React + Tailwind UI
-│       ├── src/
-│       │   ├── pages/         # Dashboard, Alerts, Entities, etc.
-│       │   ├── components/    # Alert cards, risk badges, etc.
-│       │   ├── api/           # API client
-│       │   └── store/         # State management
-│       └── build/             # Production build
+├── src/                        # Data generation + model training pipeline
+│   ├── user_generator.py       # Synthetic users
+│   ├── device_generator.py     # Synthetic devices
+│   ├── profile_generator.py    # Per-entity "normal" profiles
+│   ├── event_generator.py      # Normal access events
+│   ├── attack_generator.py     # Injects 8 attack patterns into events
+│   ├── dataset_generator.py    # Orchestrates generation, computes risk_score
+│   ├── feature_engineering.py  # Feature prep for baseline/LSTM
+│   ├── baseline_profiling.py   # Per-entity statistical baseline model
+│   ├── lstm_sequence_model.py  # LSTM training (sliding-window sequences)
+│   ├── explainability.py       # Per-alert reason generation
+│   ├── inference.py            # Offline scoring utilities
+│   └── dashboard.py            # CLI alert-queue printer
 │
-├── src/                      # Data generation & training
-│   ├── dataset_generator.py   # Synthetic data creation
-│   ├── attack_generator.py    # Attack injection
-│   ├── feature_engineering.py # Encoding + normalization
-│   ├── lstm_sequence_model.py # Model training
-│   ├── baseline_profiling.py  # Profile generation
-│   ├── inference.py           # Batch inference
-│   ├── explainability.py      # SHAP-based explanations
-│   └── config.py              # Project constants
-│
-├── trained_models/           # Pre-trained artifacts
-│   ├── lstm_model.keras      # Trained LSTM weights
-│   ├── baseline_profiles.pkl # Per-entity baselines
-│   ├── scaler.pkl            # Feature normalization
-│   ├── feature_columns.pkl   # Baseline 22-column schema
-│   └── lstm_feature_columns.pkl  # LSTM 57-column schema
+├── notebooks/                  # EDA, data generation, feature engineering, LSTM training
 │
 ├── data/
-│   ├── raw/                  # Raw generated data
-│   └── processed/            # Processed datasets
+│   ├── raw/                    # Generated CSVs (users, devices, events, attacks)
+│   └── processed/              # Feature-engineered dataset
 │
-├── reports/                  # Documentation
-│   └── project_report.md
+├── trained_models/             # Saved model artifacts (see below)
 │
-└── notebooks/                # Jupyter notebooks for EDA
+├── app/
+│   ├── backend/                 # FastAPI application
+│   │   ├── main.py              # App entry, router registration
+│   │   ├── config.py            # Paths, thresholds, ensemble weights
+│   │   ├── routers/             # anomalies, alerts, analytics, entities, health, models
+│   │   └── services/            # inference_service, alert_service, data_service
+│   └── frontend/                # React + Tailwind SPA
+│       └── src/
+│           ├── pages/            # Dashboard, Alerts, Simulate, Models, EntityHistory
+│           ├── components/       # AlertCard, AlertDetail, StatCard, RiskBadge, AnomalyTable
+│           ├── layout/            # Sidebar
+│           ├── api/                # client.js (Axios API wrappers)
+│           └── store/               # Zustand store
+│
+├── reports/                    # Project report, presentation slides, environment notes
+├── ARCHITECTURE.md             # System architecture diagram (Mermaid)
+├── FINAL_REPORT.md             # Detailed technical report
+├── ATTACK_TAXONOMY_MAPPING.md  # Spec vs. implementation mapping for attack types
+└── app/HACKATHON_REQUIREMENTS.md  # Requirements → implementation mapping
 ```
 
 ---
 
-## 🎓 API Endpoints
+## Attack taxonomy
 
-### Anomaly Detection
-```http
-POST /api/v1/anomalies/predict
-Content-Type: application/json
+Injected at a controlled rate (~2% of events) via `src/attack_generator.py`:
 
-{
-  "entity_id": "user_001",
-  "session_duration": 3600,
-  "failed_login_attempts": 2,
-  "geo_location": "Mumbai",
-  "entity_type": "user",
-  ...
-}
+| Attack type | Signal |
+|---|---|
+| Brute Force | Rapid failed logins in an off-hours window |
+| Impossible Travel | Same entity, geographically distant location + new IP |
+| Credential Stuffing | High failed attempts, new source IP, off-hours |
+| Device Spoofing | Device fingerprint mismatch + new IP |
+| Lateral Movement | Access to resources outside the entity's normal set, unusual command sequence |
+| Low and Slow Brute Force | Moderate failed attempts within normal hours (stealthy) |
+| Insider Threat | Single unusual resource access, otherwise normal signals (edge case) |
+| Slow Credential Stuffing | Moderate failed attempts, no location/device change (stealthy) |
 
-Response:
-{
-  "status": "normal",
-  "risk_score": 0.23,
-  "confidence": 0.95,
-  "flagged_by": "none",
-  "baseline_score": 0.15,
-  "lstm_confidence": 0.25
-}
-```
-
-### Alert Management
-```http
-GET /api/v1/alerts?limit=20&severity=high
-GET /api/v1/alerts/{alert_id}
-DELETE /api/v1/alerts/{alert_id}
-```
-
-### Entity History
-```http
-GET /api/v1/entities/{entity_id}/history?limit=50
-GET /api/v1/entities/search?q=user_001&entity_type=user
-```
-
-### Model Information
-```http
-GET /api/v1/models/info          # Model architectures & parameters
-GET /api/v1/models/status        # Component readiness
-GET /api/v1/models/performance   # Test set metrics
-```
-
-Full API documentation: http://localhost:8000/docs (when running)
+> The hackathon brief describes "Low-and-slow exfiltration" and "Insider drift" as
+> multi-day/multi-session gradual patterns. This implementation uses single-event
+> stealthy variants instead — see `ATTACK_TAXONOMY_MAPPING.md` for the full rationale
+> and what a true multi-session version would require.
 
 ---
 
-## 🔍 Attack Detection Examples
+## Getting started
 
-| Attack Type | Pattern | Detection Rate |
-|---|---|---|
-| **Brute Force** | 20-50 failed logins, 1-4 AM | 95%+ |
-| **Impossible Travel** | Location change <1 minute apart | 98%+ |
-| **Credential Stuffing** | 15-40 failures, 0-5 AM off-hours | 92%+ |
-| **Device Spoofing** | New unknown device fingerprint | 99%+ |
-| **Lateral Movement** | Unusual resource + long session (60+ min) | 88%+ |
-| **Low-and-Slow Brute Force** | 4-8 subtle failures, normal hours | 65%+ |
-| **Insider Threat** | Access to unauthorized resource | 72%+ |
+### Prerequisites
+- Python 3.10+ (3.12 recommended for TensorFlow compatibility)
+- Node.js 16+
+- npm
 
----
-
-## 📈 Performance Metrics
-
-**Ensemble Model (Held-out Test Set)**
-- Precision: 94%
-- Recall: 91%
-- F1-Score: 92%
-- AUC-ROC: 0.96
-
-**Individual Models:**
-- **Baseline**: Precision 92%, Recall 88%, F1 0.90
-- **LSTM**: Precision 88%, Recall 93%, F1 0.90
-
----
-
-## 🛠️ Configuration
-
-Edit `app/backend/config.py` to customize:
-```python
-BASELINE_WEIGHT = 0.4           # Baseline model weight in ensemble
-LSTM_WEIGHT = 0.6               # LSTM model weight in ensemble
-ANOMALY_THRESHOLD = 0.5         # Anomaly detection threshold
-LSTM_THRESHOLD = 0.5            # LSTM confidence threshold
-CORS_ORIGINS = ["http://localhost:3000"]  # Frontend URL
-DEBUG = False                   # Debug mode
-```
-
----
-
-## 🧠 Model Training
-
-To retrain models on new data:
-
-```bash
-# 1. Generate synthetic dataset
-python -m src.dataset_generator
-
-# 2. Feature engineering
-python -m src.feature_engineering
-
-# 3. Train LSTM model
-python -m src.lstm_sequence_model
-
-# 4. Build baseline profiles
-python -m src.baseline_profiling
-
-# 5. Test inference
-python -m src.inference
-```
-
----
-
-## 📊 Data Generation
-
-The system includes a realistic synthetic data generator:
+### 1. Generate the dataset (optional — pre-generated CSVs are already in `data/raw/`)
 
 ```bash
 python -m src.dataset_generator
 ```
 
-**Generates:**
-- 500 synthetic users with realistic profiles (department, location, device)
-- 700 edge devices with fingerprints
-- 90 days of access logs (normal behavior + 2% injected attacks)
-- 8 attack types: brute force, impossible travel, credential stuffing, device spoofing, lateral movement, + stealthy variants
+### 2. Train models (optional — pre-trained artifacts are already in `trained_models/`)
 
-**Dataset Statistics:**
-- Total events: ~45,000
-- Attack rate: 2% (configurable)
-- Features per event: 22 raw features (expanded to 57 with one-hot encoding for LSTM)
-- Balanced across entity types: users, service accounts, edge devices
-
----
-
-## 🎨 Dashboard Features
-
-**Anomalies Page**
-- Real-time anomaly alerts with risk scores
-- Per-entity anomaly history
-- Manual alert acknowledgment
-
-**Alerts View**
-- Comprehensive alert queue
-- Risk-based sorting
-- Alert severity: Low, Medium, High, Critical
-- Single-click drill-down to detailed investigation
-
-**Entity History**
-- Per-user/device behavioral timeline
-- Session summaries (duration, resources, failures)
-- Anomaly pattern correlation
-
-**Model Comparison**
-- Live metrics from test set
-- Baseline vs LSTM vs Ensemble performance
-- Confidence intervals
-
----
-
-## 🔧 Troubleshooting
-
-**Backend won't start - Missing LSTM model**
-```
-Error: LSTM model file not found
-Fix: Run: python -m src.lstm_sequence_model
-```
-
-**Frontend can't reach backend**
-```
-Error: CORS blocked / API 404
-Fix: Ensure backend is running on http://localhost:8000
-Check CORS_ORIGINS in app/backend/config.py
-```
-
-**TensorFlow import errors**
-```
-Error: No module named 'tensorflow'
-Fix: pip install tensorflow>=2.13.0 keras==2.14.0
-```
-
-**Feature encoding mismatch (LSTM)**
-```
-Error: Expected 57 features, got 22
-Fix: Ensure lstm_feature_columns.pkl is loaded
-Check: app/backend/config.py has LSTM_FEATURE_COLUMNS path
-```
-
----
-
-## 📚 Documentation
-
-- **[FINAL_REPORT.md](./FINAL_REPORT.md)** - Comprehensive technical report with findings and insights
-- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - Detailed system architecture and data flow
-- **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - Quick lookup for common tasks
-- **[app/HACKATHON_REQUIREMENTS.md](./app/HACKATHON_REQUIREMENTS.md)** - Requirements checklist
-
----
-
-## 🔐 Security Considerations
-
-- ✅ No PII stored (synthetic data only)
-- ✅ CORS restricted to frontend origin
-- ✅ HTTPS recommended for production
-- ✅ Model artifacts versioned and validated
-- ✅ Alert history retained for audit trail
-
----
-
-## 🚀 Production Deployment
-
-**Requirements:**
-- Python 3.12+ environment
-- PostgreSQL for persistent alert storage (optional)
-- GPU recommended for real-time inference on high volumes
-
-**Recommended Setup:**
 ```bash
-# Use production ASGI server (Gunicorn/Uvicorn)
-gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.backend.main:app
-
-# Run frontend with production build
-npm run build && serve -s build -l 3000
-
-# Monitor system health
-curl http://localhost:8000/api/v1/health
+python -m src.baseline_profiling      # → trained_models/baseline_profile.pkl
+pip install tensorflow>=2.14.0
+python -m src.lstm_sequence_model     # → trained_models/lstm_model.keras
 ```
 
----
+### 3. Run the backend
 
-## 📄 License
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
+pip install -r app/backend/requirements.txt
 
-This project is provided as-is for educational and research purposes.
+cd app/backend
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
----
+API docs: http://localhost:8000/docs
 
-## 👥 Contributors
+### 4. Run the frontend
 
-Developed as part of an advanced cybersecurity anomaly detection project.
+```bash
+cd app/frontend
+npm install
+npm start
+```
 
----
-
-## ❓ FAQ
-
-**Q: What's the difference between Baseline and LSTM models?**  
-A: Baseline uses statistical profiling for fast detection of obvious anomalies. LSTM learns temporal patterns in sequences to catch stealthy, multi-event attacks. Together they achieve better coverage.
-
-**Q: How is the ensemble score calculated?**  
-A: Weighted voting: `final_score = 0.4 * baseline_score + 0.6 * lstm_confidence`. Weights are configurable.
-
-**Q: Can I use real production data?**  
-A: Yes! Replace CSV files in `data/raw/` with your own access logs. Ensure the same schema (entity_id, timestamp, failed_login_attempts, etc.).
-
-**Q: How do I explain a specific alert?**  
-A: Click "View Details" on any alert in the dashboard. SHAP values show which features contributed to the anomaly score.
-
-**Q: What's the inference latency?**  
-A: ~0.5ms per event (baseline) + ~1ms per event (LSTM) = ~1.5ms typical. Batch processing can achieve 1000s of events/sec.
+Dashboard: http://localhost:3000
 
 ---
 
-## 📞 Support
+## Trained model artifacts (`trained_models/`)
 
-For issues, questions, or suggestions, refer to the documentation files or system logs.
+| File | Used by |
+|---|---|
+| `lstm_model.keras` | LSTM sequence model (128→64 stacked LSTM, sigmoid output) |
+| `lstm_feature_columns.pkl` | 57 one-hot-expanded column names for LSTM input reconstruction |
+| `lstm_threshold.pkl` | Calibrated decision threshold for LSTM confidence |
+| `baseline_profile.pkl` | Per-entity statistical "normal" profiles |
+| `feature_columns.pkl` | Raw column names used by the baseline scorer (distinct from the LSTM's list above — do not conflate the two) |
+| `scaler.pkl` | `StandardScaler` fit on the 6 numeric LSTM input features |
+| `label_encoder.pkl`, `attack_type_label_encoder.pkl`, `target_label_encoder.pkl` | Reserved encoders |
 
-Last Updated: January 2026
+---
+
+## API overview
+
+All routes are prefixed `/api/v1` unless noted.
+
+| Router | Endpoints |
+|---|---|
+| Health | `GET /health`, `/health/ready`, `/health/live` |
+| Anomalies | `POST /anomalies/detect`, `POST /anomalies/detect/batch`, `GET /anomalies/list`, `GET /anomalies/{id}`, `GET /anomalies/statistics` |
+| Alerts | `GET /alerts/`, `GET /alerts/active`, `GET /alerts/{id}`, `GET /alerts/statistics` |
+| Analytics | `GET /analytics/overview`, `/risk-distribution`, `/time-series`, `/top-resources`, `/top-locations`, `/model-performance`, `/entity-risk-summary` |
+| Entities | `GET /entities/users`, `/entities/devices`, `/entities/users/{id}`, `/entities/devices/{id}`, `/entities/search` |
+| Models | `GET /models/info`, `/models/status`, `/models/performance` |
+
+---
+
+## Explainability — how it actually works
+
+Each alert's `reasons` list is generated by `_score_baseline()` in
+`app/backend/services/inference_service.py`, comparing the incoming event against the
+entity's stored baseline profile. Examples of the generated reasons:
+
+- `"Unauthorized resource access (Insider threat indicator)"`
+- `"Impossible travel detected (Location change)"`
+- `"Unusual authentication method"`
+- `"Extreme session duration anomaly (Expected ~{mean}s, got {actual}s)"`
+
+Each alert also reports `flagged_by` (`baseline`, `lstm`, or `both`), telling the
+analyst which detection mechanism triggered it. This is a deviation-based /
+rule-attribution approach, not SHAP — there is no `shap` dependency or usage anywhere
+in this codebase.
+
+---
+
+## Known limitations
+
+- **`/models/performance` currently returns fixed example values**, not metrics
+  computed from a live evaluation run against the trained models. The frontend's
+  Model Comparison page correctly labels this (`⚠ Example metrics` vs `✓ Metrics from
+  held-out test set`), but the backend endpoint itself has not yet been wired to a
+  real scoring pass. Treat every number sourced from this endpoint — including
+  anything repeated in `FINAL_REPORT.md` or the presentation — as illustrative until
+  this is implemented.
+- **Cold-start entities** get a flat fallback baseline score rather than a
+  personalized profile until they accumulate history.
+- **TensorFlow availability**: if TensorFlow isn't installed in the runtime
+  environment, the system falls back to baseline-only scoring automatically.
+- **Attack taxonomy is a simplified mapping** for two of the eight patterns — see
+  `ATTACK_TAXONOMY_MAPPING.md`.
+- Synthetic data stands in for real access logs; results describe the model's ability
+  to separate injected attack patterns from simulated normal behavior, not validated
+  traffic from a production environment.
+
+---
+
+## Documentation map
+
+| File | Purpose |
+|---|---|
+| `README.md` (this file) | Entry point — what the project is, how to run it |
+| `app/README.md` | Backend/frontend run instructions (subset of this file) |
+| `app/HACKATHON_REQUIREMENTS.md` | Maps each brief requirement to the implementing code |
+| `FINAL_REPORT.md` | Full technical report — approach, assumptions, metrics, limitations |
+| `ARCHITECTURE.md` | System architecture diagram (Mermaid) |
+| `ATTACK_TAXONOMY_MAPPING.md` | Spec vs. implementation mapping for the 8 attack types |
+| `reports/presentation.md` | Slide content for the required presentation deliverable |
+
+---
+
+## License
+
+Hackathon submission — no license specified.
