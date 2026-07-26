@@ -10,14 +10,14 @@
 - Must explain why events were flagged
 
 ## Slide 3: Data Generation
-- Synthetic users, devices, and profiles
-- Normal access events generated per entity
-- Attack taxonomy injected at controlled rate
+- 500 synthetic users with realistic profiles (department, location, device)
+- 700 edge devices with unique fingerprints
+- 90-day access log simulation with 2% attack rate
+- 45,000+ events with realistic behavioral variance
 
-## Slide 4: Attack Types
-- Brute Force
-- Impossible Travel
-- Credential Stuffing
+## Slide 4: Attack Types Implemented
+- **Loud attacks** (30%): Brute Force, Impossible Travel, Credential Stuffing, Device Spoofing, Lateral Movement
+- **Stealthy attacks** (70%): Low-and-Slow Brute Force, Insider Threat, Slow Credential Stuffing
 - Device Spoofing
 - Lateral Movement
 - Low-and-slow variants for stealth
