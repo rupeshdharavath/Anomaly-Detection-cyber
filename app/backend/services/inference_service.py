@@ -11,10 +11,42 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 import sys
 import os
+from collections import defaultdict
 
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# LSTM training architecture constants
+NUMERIC_COLUMNS = [
+    "session_duration",
+    "failed_login_attempts",
+    "normal_login_start",
+    "normal_failed_login_attempts",
+    "login_hour",
+    "risk_score",
+]
+BOOLEAN_COLUMNS = [
+    "location_changed",
+    "device_changed",
+    "auth_changed",
+    "login_time_changed",
+    "long_session",
+    "high_failed_login",
+    "resource_changed",
+]
+CATEGORICAL_COLUMNS = [
+    "entity_type",
+    "geo_location",
+    "resource_accessed",
+    "auth_method",
+    "department",
+    "office",
+    "device_type",
+    "operating_system",
+    "browser",
+]
+WINDOW_SIZE = 5
 
 
 class InferenceService:
@@ -28,6 +60,9 @@ class InferenceService:
         self.scaler = None
         self.feature_columns = None
         self.models_loaded = False
+        
+        # Entity event buffer: maps entity_id -> list of last WINDOW_SIZE feature vectors
+        self.entity_event_buffer = defaultdict(lambda: [])
         
         self._load_models()
     
@@ -207,65 +242,143 @@ class InferenceService:
     
     def _score_lstm(self, event_data: Dict[str, Any]) -> Optional[float]:
         """
-        Score event using LSTM model
+        Score event using LSTM model with proper sequence windowing
+        
+        Maintains a sliding window of last WINDOW_SIZE (5) events per entity.
+        Passes 3D tensor (1, 5, 57) to the model.
         
         Returns:
             LSTM confidence score (0-1) or None if model unavailable
         """
         try:
-            if not self.lstm_model:
+            if not self.lstm_model or not self.feature_columns:
                 return None
             
-            # Convert event to features (simplified)
-            # In production, this would use the full feature engineering pipeline
+            entity_id = event_data.get('entity_id')
+            if not entity_id:
+                return None
+            
+            # Extract features as a 1D vector
             features = self._extract_features(event_data)
-            
-            if features is None:
+            if features is None or len(features) != len(self.feature_columns):
                 return None
             
-            # Scale features or convert to 2D input
-            if self.scaler:
-                features = self.scaler.transform([features])
-            else:
-                features = np.asarray([features], dtype=float)
+            # Add to entity's event buffer
+            self.entity_event_buffer[entity_id].append(features)
+            
+            # Keep only last WINDOW_SIZE events
+            if len(self.entity_event_buffer[entity_id]) > WINDOW_SIZE:
+                self.entity_event_buffer[entity_id] = self.entity_event_buffer[entity_id][-WINDOW_SIZE:]
+            
+            # If we don't have enough history, pad with zeros (first few events for cold start)
+            window = self.entity_event_buffer[entity_id].copy()
+            while len(window) < WINDOW_SIZE:
+                window.insert(0, [0.0] * len(self.feature_columns))
+            
+            # Build 3D sequence: (1, WINDOW_SIZE, num_features)
+            sequence = np.array([window], dtype=np.float32)  # Shape: (1, 5, 57)
+            
+            # Verify shape matches model expectation
+            if sequence.shape != (1, WINDOW_SIZE, len(self.feature_columns)):
+                logger.error(f"Shape mismatch: expected (1, {WINDOW_SIZE}, {len(self.feature_columns)}), got {sequence.shape}")
+                return None
             
             # Predict
-            prediction = self.lstm_model.predict(features, verbose=0)
-
-            if isinstance(prediction, np.ndarray):
-                confidence = float(np.asarray(prediction).reshape(-1)[0])
-            elif isinstance(prediction, list):
-                if len(prediction) > 0:
-                    first = prediction[0]
-                    confidence = float(first[0] if isinstance(first, (list, tuple, np.ndarray)) else first)
+            try:
+                prediction = self.lstm_model.predict(sequence, verbose=0)
+                
+                if isinstance(prediction, np.ndarray):
+                    confidence = float(np.asarray(prediction).reshape(-1)[0])
+                elif isinstance(prediction, list):
+                    if len(prediction) > 0:
+                        first = prediction[0]
+                        confidence = float(first[0] if isinstance(first, (list, tuple, np.ndarray)) else first)
+                    else:
+                        return None
                 else:
-                    return None
-            else:
-                confidence = float(prediction)
-            
-            return confidence
+                    confidence = float(prediction)
+                
+                # Clamp to [0, 1]
+                confidence = max(0.0, min(1.0, confidence))
+                return confidence
+                
+            except Exception as e:
+                logger.error(f"Model prediction failed: {e} (shape: {sequence.shape})")
+                return None
             
         except Exception as e:
             logger.error(f"Error in LSTM scoring: {e}")
             return None
     
     def _extract_features(self, event_data: Dict[str, Any]) -> Optional[List[float]]:
-        """Extract features from event data for model input"""
+        """
+        Extract full 57-feature vector from event data, matching training pipeline.
+        
+        Builds:
+        - 6 numeric features (scaled by scaler)
+        - 7 boolean features (0/1)
+        - ~38 one-hot categorical features (9 categorical columns)
+        
+        Returns:
+            List of 57 floats or None on error
+        """
         try:
-            # Create a feature vector based on available data
-            features = [
-                float(event_data.get('failed_login_attempts', 0)),
-                float(event_data.get('session_duration', 0)),
-                1.0 if event_data.get('geo_location', '').startswith('Unknown') else 0.0,
-                1.0,  # Placeholder for device_changed
-                # Add more features as needed
-            ]
+            if not self.feature_columns:
+                logger.error("Feature columns not loaded - cannot extract features")
+                return None
             
-            # Pad or truncate to expected length
-            expected_len = 23 if self.feature_columns else 4
-            while len(features) < expected_len:
-                features.append(0.0)
-            features = features[:expected_len]
+            features = []
+            
+            # Extract numeric features (first 6 in training)
+            numeric_vals = []
+            for col in NUMERIC_COLUMNS:
+                if col in event_data:
+                    numeric_vals.append(float(event_data[col]))
+                else:
+                    numeric_vals.append(0.0)
+            
+            # Scale numeric features using the fitted scaler
+            if self.scaler and len(numeric_vals) == len(NUMERIC_COLUMNS):
+                try:
+                    scaled = self.scaler.transform([numeric_vals])[0]
+                    features.extend(scaled)
+                except Exception as e:
+                    logger.warning(f"Scaler transform failed: {e}, using raw values")
+                    features.extend(numeric_vals)
+            else:
+                features.extend(numeric_vals)
+            
+            # Extract boolean features (7 columns)
+            for col in BOOLEAN_COLUMNS:
+                val = event_data.get(col, 0)
+                features.append(float(val if val else 0))
+            
+            # Extract and one-hot encode categorical features
+            for col in CATEGORICAL_COLUMNS:
+                col_val = str(event_data.get(col, '')).strip()
+                
+                # Get all possible categories for this column from training
+                col_categories = set()
+                for feature_name in self.feature_columns:
+                    if feature_name.startswith(f"{col}_"):
+                        # Extract the category value (format is "col_category")
+                        category = feature_name[len(col)+1:]
+                        col_categories.add(category)
+                
+                # One-hot encode this categorical value
+                for category in sorted(col_categories):
+                    one_hot = 1.0 if col_val == category else 0.0
+                    features.append(one_hot)
+            
+            # Verify length matches expected feature count
+            if len(features) != len(self.feature_columns):
+                logger.warning(
+                    f"Feature count mismatch: extracted {len(features)}, "
+                    f"expected {len(self.feature_columns)}. Padding with zeros."
+                )
+                while len(features) < len(self.feature_columns):
+                    features.append(0.0)
+                features = features[:len(self.feature_columns)]
             
             return features
             
