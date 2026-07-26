@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import precision_score, recall_score, roc_auc_score, f1_score
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, roc_auc_score, f1_score
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -65,11 +65,20 @@ def compute_alert_budget(df: pd.DataFrame, score_column: str, budget_fraction: f
 
 
 def safe_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: np.ndarray | None) -> dict[str, Any]:
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = int(cm[0, 0]), int(cm[0, 1]), int(cm[1, 0]), int(cm[1, 1])
+
     metrics = {
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
         "recall": float(recall_score(y_true, y_pred, zero_division=0)),
         "f1_score": float(f1_score(y_true, y_pred, zero_division=0)),
         "samples_evaluated": int(len(y_true)),
+        "confusion_matrix": {
+            "true_negatives": tn,
+            "false_positives": fp,
+            "false_negatives": fn,
+            "true_positives": tp,
+        },
     }
     if y_score is not None and len(np.unique(y_true)) > 1:
         try:

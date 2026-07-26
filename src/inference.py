@@ -1,15 +1,42 @@
 import joblib
+import numpy as np
 import pandas as pd
 from importlib import import_module
+from pathlib import Path
 
-from src.baseline_profiling import score_against_baseline
+from src.baseline_profiling import create_baseline_profile_artifact, score_against_baseline
 from src.lstm_sequence_model import build_sequence_windows
 
+ROOT = Path(__file__).resolve().parents[1]
+BASELINE_PROFILE_PATH = ROOT / 'trained_models' / 'baseline_profile.pkl'
+LSTM_THRESHOLD_PATH = ROOT / 'trained_models' / 'lstm_threshold.pkl'
+
+
+def _load_baseline_profiles():
+    if BASELINE_PROFILE_PATH.exists():
+        try:
+            payload = joblib.load(BASELINE_PROFILE_PATH)
+            if isinstance(payload, pd.DataFrame):
+                return payload
+            if isinstance(payload, dict) and 'profiles' in payload:
+                return payload['profiles']
+            if isinstance(payload, (list, tuple)):
+                return pd.DataFrame(payload)
+            return pd.DataFrame(payload)
+        except Exception:
+            pass
+
+    try:
+        return create_baseline_profile_artifact()
+    except Exception:
+        return pd.DataFrame(columns=['entity_id'])
+
+
 # Load all models and artifacts once
-baseline_profiles = joblib.load('trained_models/baseline_profile.pkl')
+baseline_profiles = _load_baseline_profiles()
 try:
-    lstm_threshold_info = joblib.load('trained_models/lstm_threshold.pkl')
-except FileNotFoundError:
+    lstm_threshold_info = joblib.load(LSTM_THRESHOLD_PATH)
+except Exception:
     lstm_threshold_info = {'threshold': 0.5}
 LSTM_THRESHOLD = float(lstm_threshold_info['threshold'])
 
@@ -29,6 +56,9 @@ def _score_lstm_for_batch(raw_events: pd.DataFrame):
     if 'timestamp' not in df.columns:
         return None
 
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+    df = df.reset_index().rename(columns={'index': '__orig_index'})
+
     try:
         df = df.sort_values(['entity_id', 'timestamp']).reset_index(drop=True)
         sequences, _, _, _, _ = build_sequence_windows(df)
@@ -39,7 +69,13 @@ def _score_lstm_for_batch(raw_events: pd.DataFrame):
         return None
 
     proba = lstm_model.predict(sequences, verbose=0).ravel()
-    return proba
+    if len(proba) != len(df):
+        return proba
+
+    aligned_proba = [0.0] * len(df)
+    for original_index, score in zip(df['__orig_index'].tolist(), proba.tolist()):
+        aligned_proba[original_index] = float(score)
+    return aligned_proba
 
 
 def _score_baseline_for_batch(raw_events: pd.DataFrame):
@@ -71,6 +107,7 @@ def predict(event_features: pd.DataFrame):
     if {'entity_id', 'timestamp', 'label'}.issubset(event_features.columns):
         lstm_proba = _score_lstm_for_batch(event_features)
         if lstm_proba is not None and len(lstm_proba) == len(event_features):
+            lstm_proba = np.asarray(lstm_proba, dtype=float)
             lstm_flag = lstm_proba >= LSTM_THRESHOLD
         else:
             lstm_flag = None
