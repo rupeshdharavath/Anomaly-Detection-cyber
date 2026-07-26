@@ -36,23 +36,26 @@ async def get_analytics_overview(
         - Top attack types
     """
     try:
+        from ..routers.anomalies import anomaly_store
         stats = data_service.get_statistics()
+        total_events = stats.get('events_count', 0)
+        total_anomalies = len(anomaly_store)
+        anomaly_rate = total_anomalies / total_events if total_events > 0 else 0.0
         
-        # This would be populated from actual detections
-        risk_dist = RiskDistribution(low=100, medium=50, high=30, critical=5)
+        # Count anomalies by risk level
+        risk_dist = {'low': 0, 'medium': 0, 'high': 0, 'critical': 0}
+        for anomaly in anomaly_store:
+            risk_level = anomaly.get('risk_level', 'low')
+            if risk_level in risk_dist:
+                risk_dist[risk_level] += 1
         
         return {
             "status": "success",
             "data": {
-                "total_events": stats.get('events_count', 0),
-                "total_anomalies": 185,  # Would come from anomaly store
-                "anomaly_rate": 0.041,  # 185 / 45000
-                "risk_distribution": {
-                    "low": 100,
-                    "medium": 50,
-                    "high": 30,
-                    "critical": 5
-                },
+                "total_events": total_events,
+                "total_anomalies": total_anomalies,
+                "anomaly_rate": anomaly_rate,
+                "risk_distribution": risk_dist,
                 "data_range": stats.get('date_range', {}),
                 "processed_logs": stats.get('processed_logs_count', 0)
             }
@@ -73,14 +76,15 @@ async def get_risk_distribution(
     Returns counts of events by risk level
     """
     try:
+        from ..routers.anomalies import anomaly_store
+        risk_dist = {'low': 0, 'medium': 0, 'high': 0, 'critical': 0}
+        for anomaly in anomaly_store:
+            risk_level = anomaly.get('risk_level', 'low')
+            if risk_level in risk_dist:
+                risk_dist[risk_level] += 1
         return {
             "status": "success",
-            "data": {
-                "low": 25500,      # 56.7%
-                "medium": 12750,   # 28.3%
-                "high": 5400,      # 12%
-                "critical": 1350   # 3%
-            }
+            "data": risk_dist
         }
         
     except Exception as e:
@@ -104,10 +108,14 @@ async def get_time_series_data(
         
         normalized_points = []
         for point in time_series:
+            hour_val = point.get("hour")
+            timestamp_str = hour_val.isoformat() if hasattr(hour_val, "isoformat") else str(hour_val)
             normalized_points.append({
-                "timestamp": point.get("hour").isoformat() if hasattr(point.get("hour"), "isoformat") else point.get("hour"),
-                "value": point.get("count", 0),
-                "risk_score": point.get("risk_score", 0),
+                "hour": timestamp_str,
+                "timestamp": timestamp_str,
+                "count": int(point.get("count", 0)),
+                "value": int(point.get("count", 0)),
+                "risk_score": float(point.get("risk_score", 0.0)),
             })
 
         return {

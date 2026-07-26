@@ -126,15 +126,23 @@ class InferenceService:
                     baseline_data = pickle.load(f)
 
                 if isinstance(baseline_data, pd.DataFrame):
+                    # Handle DataFrame with possible duplicate indices
+                    self.baseline_profiles = {}
                     if 'entity_id' in baseline_data.columns:
-                        baseline_data = baseline_data.set_index('entity_id')
-                        self.baseline_profiles = {
-                            str(entity_id): row for entity_id, row in baseline_data.to_dict(orient='index').items()
-                        }
+                        # Group by entity_id and take first/most recent profile
+                        for entity_id, group in baseline_data.groupby('entity_id'):
+                            self.baseline_profiles[str(entity_id)] = group.iloc[-1].to_dict()
                     else:
-                        self.baseline_profiles = baseline_data.to_dict(orient='index')
+                        # Use index as entity_id
+                        baseline_data_reset = baseline_data.reset_index()
+                        if 'index' in baseline_data_reset.columns:
+                            baseline_data_reset = baseline_data_reset.rename(columns={'index': 'entity_id'})
+                        for _, row in baseline_data_reset.iterrows():
+                            entity_id = str(row.get('entity_id', f'entity_{_}'))
+                            self.baseline_profiles[entity_id] = row.to_dict()
                 else:
-                    self.baseline_profiles = baseline_data
+                    # Already a dict or similar
+                    self.baseline_profiles = baseline_data if isinstance(baseline_data, dict) else {}
 
                 baseline_loaded = bool(self.baseline_profiles)
                 logger.info(f"✅ Baseline profiles loaded ({len(self.baseline_profiles)} entities)")
@@ -179,6 +187,44 @@ class InferenceService:
 
         self.models_loaded = baseline_loaded or bool(self.lstm_model)
     
+    def _normalize_attack_type(self, attack_type: str) -> str:
+        """
+        Normalize attack type to enum format (lowercase with underscores)
+        
+        Args:
+            attack_type: Attack type string (may have spaces, capitals, etc.)
+            
+        Returns:
+            Normalized attack type string
+        """
+        if not attack_type or attack_type.lower() == 'unknown':
+            return 'unknown'
+        
+        # Mapping from various formats to enum format
+        mapping = {
+            'brute_force': 'brute_force',
+            'brute force': 'brute_force',
+            'bruteforce': 'brute_force',
+            'impossible_travel': 'impossible_travel',
+            'impossible travel': 'impossible_travel',
+            'credential_stuffing': 'credential_stuffing',
+            'credential stuffing': 'credential_stuffing',
+            'device_spoofing': 'device_spoofing',
+            'device spoofing': 'device_spoofing',
+            'lateral_movement': 'lateral_movement',
+            'lateral movement': 'lateral_movement',
+            'low_and_slow': 'low_and_slow',
+            'low and slow': 'low_and_slow',
+            'insider_threat': 'insider_threat',
+            'insider threat': 'insider_threat',
+            'slow_credential': 'slow_credential',
+            'slow credential': 'slow_credential',
+            'unknown': 'unknown',
+        }
+        
+        normalized = attack_type.lower().replace(' ', '_')
+        return mapping.get(normalized, 'unknown')
+    
     def predict(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Predict anomaly for a single event
@@ -206,28 +252,27 @@ class InferenceService:
                 baseline_reasons,
                 lstm_confidence
             )
+            
+            # Track cold-start entities
             if event_data.get('entity_id') and event_data.get('entity_id') not in self.baseline_profiles:
                 self.cold_start_entities.add(str(event_data.get('entity_id')))
+            
+            # Predict attack type if models are available
             if self.attack_type_model is not None and self.attack_type_encoder is not None and self.attack_type_cat_encoders is not None and self.attack_type_feature_columns is not None:
-                predicted_attack_type = predict_attack_type(
-                    event_data,
-                    self.attack_type_model,
-                    self.attack_type_encoder,
-                    self.attack_type_cat_encoders,
-                    self.attack_type_feature_columns,
-                )
-                if predicted_attack_type:
-                    result['attack_type'] = predicted_attack_type
-            if self.attack_type_model is not None and self.attack_type_encoder is not None and self.attack_type_cat_encoders is not None and self.attack_type_feature_columns is not None:
-                predicted_attack_type = predict_attack_type(
-                    event_data,
-                    self.attack_type_model,
-                    self.attack_type_encoder,
-                    self.attack_type_cat_encoders,
-                    self.attack_type_feature_columns,
-                )
-                if predicted_attack_type:
-                    result['attack_type'] = predicted_attack_type
+                try:
+                    predicted_attack_type = predict_attack_type(
+                        event_data,
+                        self.attack_type_model,
+                        self.attack_type_encoder,
+                        self.attack_type_cat_encoders,
+                        self.attack_type_feature_columns,
+                    )
+                    if predicted_attack_type:
+                        # Normalize attack type to enum format
+                        result['attack_type'] = self._normalize_attack_type(predicted_attack_type)
+                except Exception as e:
+                    logger.warning(f"Error predicting attack type: {e}")
+                    result['attack_type'] = 'unknown'
             
             return result
             

@@ -166,7 +166,7 @@ class DataService:
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
                 
                 # Group by hour
-                df['hour'] = df['timestamp'].dt.floor('H')
+                df['hour'] = df['timestamp'].dt.floor('h')
                 
                 time_series = df.groupby('hour').size().reset_index(name='count')
                 time_series['risk_score'] = df.groupby('hour')['risk_score'].mean().values if 'risk_score' in df.columns else 0.5
