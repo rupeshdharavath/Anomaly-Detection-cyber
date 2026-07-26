@@ -133,11 +133,20 @@ export const useStore = create((set, get) => ({
       const overview = await analyticsAPI.getOverview();
       const timeSeries = await analyticsAPI.getTimeSeries();
       const performance = await analyticsAPI.getModelPerformance();
-      
+
+      // Normalize time series to always be an object with `points` array
+      const tsPayload = timeSeries?.data?.data ?? timeSeries?.data;
+      let tsPoints = [];
+      if (Array.isArray(tsPayload)) {
+        tsPoints = tsPayload;
+      } else if (tsPayload && Array.isArray(tsPayload.points)) {
+        tsPoints = tsPayload.points;
+      }
+
       set({
         analytics: {
           overview: overview.data,
-          timeSeries: timeSeries.data?.data || timeSeries.data,
+          timeSeries: { points: tsPoints },
           performance: performance.data,
         },
         loading: false,

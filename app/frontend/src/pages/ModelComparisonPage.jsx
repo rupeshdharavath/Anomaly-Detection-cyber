@@ -21,11 +21,20 @@ const ModelComparisonPage = () => {
         // Expected shape: { data: { baseline: {...}, lstm: {...}, ensemble: {...} } }
         if (payload && payload.data && mounted) {
           const { baseline, lstm, ensemble } = payload.data;
+          const normalize = (m) => ({
+            precision: m?.precision ?? m?.Precision ?? 0,
+            recall: m?.recall ?? m?.Recall ?? 0,
+            f1: m?.f1 ?? m?.f1_score ?? m?.F1 ?? 0,
+            auc: m?.auc ?? m?.auc_roc ?? m?.AUC ?? 0,
+            accuracy: m?.accuracy ?? 0,
+            samples_evaluated: m?.samples_evaluated ?? m?.samples ?? 0,
+          });
+
           if (baseline && lstm && ensemble) {
             setModels([
-              { name: 'Baseline', ...baseline },
-              { name: 'LSTM', ...lstm },
-              { name: 'Ensemble', ...ensemble },
+              { name: 'Baseline', ...normalize(baseline) },
+              { name: 'LSTM', ...normalize(lstm) },
+              { name: 'Ensemble', ...normalize(ensemble) },
             ]);
             setDataSource('real');
             return;

@@ -98,13 +98,19 @@ const Dashboard = () => {
           <div className="lg:col-span-2 bg-black text-white border border-slate-300/20 rounded-3xl shadow-xl p-6 hover:shadow-2xl transition">
             <h2 className="text-lg font-semibold text-white mb-4">Anomalies Over Time</h2>
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={analytics?.timeSeries?.points || []}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.2)" />
-                <XAxis dataKey="timestamp" stroke="rgb(148,163,184)" />
-                <YAxis stroke="rgb(148,163,184)" />
-                <Tooltip contentStyle={{ backgroundColor: 'rgba(15,23,42,0.8)', border: '1px solid rgba(71,85,105,0.5)' }} />
-                <Line type="monotone" dataKey="value" stroke="#3b82f6" dot={false} />
-              </LineChart>
+              {(() => {
+                const ts = analytics?.timeSeries;
+                const points = Array.isArray(ts) ? ts : ts?.points || [];
+                return (
+                  <LineChart data={points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.2)" />
+                    <XAxis dataKey="timestamp" stroke="rgb(148,163,184)" />
+                    <YAxis stroke="rgb(148,163,184)" />
+                    <Tooltip contentStyle={{ backgroundColor: 'rgba(15,23,42,0.8)', border: '1px solid rgba(71,85,105,0.5)' }} />
+                    <Line type="monotone" dataKey="value" stroke="#3b82f6" dot={false} />
+                  </LineChart>
+                );
+              })()}
             </ResponsiveContainer>
           </div>
 
