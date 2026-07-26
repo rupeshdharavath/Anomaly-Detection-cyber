@@ -59,6 +59,7 @@ class InferenceService:
         self.baseline_profiles = None
         self.scaler = None
         self.feature_columns = None
+        self.lstm_feature_columns = None  # LSTM-specific 57-feature columns (one-hot expanded)
         self.models_loaded = False
         
         # Entity event buffer: maps entity_id -> list of last WINDOW_SIZE feature vectors
@@ -143,6 +144,19 @@ class InferenceService:
         except Exception as e:
             logger.warning(f"⚠️  Could not load feature columns: {e}")
             self.feature_columns = None
+
+        # Load LSTM-specific feature columns (57 one-hot expanded features)
+        try:
+            if os.path.exists(settings.LSTM_FEATURE_COLUMNS):
+                with open(settings.LSTM_FEATURE_COLUMNS, 'rb') as f:
+                    self.lstm_feature_columns = pickle.load(f)
+                logger.info(f"✅ LSTM feature columns loaded ({len(self.lstm_feature_columns)} features)")
+            else:
+                logger.warning(f"⚠️  LSTM feature columns not found at {settings.LSTM_FEATURE_COLUMNS}")
+                self.lstm_feature_columns = None
+        except Exception as e:
+            logger.warning(f"⚠️  Could not load LSTM feature columns: {e}")
+            self.lstm_feature_columns = None
 
         self.models_loaded = baseline_loaded or bool(self.lstm_model)
     
@@ -251,16 +265,20 @@ class InferenceService:
             LSTM confidence score (0-1) or None if model unavailable
         """
         try:
-            if not self.lstm_model or not self.feature_columns:
+            if not self.lstm_model or not self.lstm_feature_columns:
                 return None
             
             entity_id = event_data.get('entity_id')
             if not entity_id:
                 return None
             
-            # Extract features as a 1D vector
+            # Extract features as a 1D vector (must be 57 elements)
             features = self._extract_features(event_data)
-            if features is None or len(features) != len(self.feature_columns):
+            if features is None or len(features) != len(self.lstm_feature_columns):
+                logger.error(
+                    f"Feature extraction failed: expected {len(self.lstm_feature_columns)} features, "
+                    f"got {len(features) if features else 0}"
+                )
                 return None
             
             # Add to entity's event buffer
@@ -273,14 +291,14 @@ class InferenceService:
             # If we don't have enough history, pad with zeros (first few events for cold start)
             window = self.entity_event_buffer[entity_id].copy()
             while len(window) < WINDOW_SIZE:
-                window.insert(0, [0.0] * len(self.feature_columns))
+                window.insert(0, [0.0] * len(self.lstm_feature_columns))
             
             # Build 3D sequence: (1, WINDOW_SIZE, num_features)
             sequence = np.array([window], dtype=np.float32)  # Shape: (1, 5, 57)
             
             # Verify shape matches model expectation
-            if sequence.shape != (1, WINDOW_SIZE, len(self.feature_columns)):
-                logger.error(f"Shape mismatch: expected (1, {WINDOW_SIZE}, {len(self.feature_columns)}), got {sequence.shape}")
+            if sequence.shape != (1, WINDOW_SIZE, len(self.lstm_feature_columns)):
+                logger.error(f"Shape mismatch: expected (1, {WINDOW_SIZE}, {len(self.lstm_feature_columns)}), got {sequence.shape}")
                 return None
             
             # Predict
@@ -319,12 +337,15 @@ class InferenceService:
         - 7 boolean features (0/1)
         - ~38 one-hot categorical features (9 categorical columns)
         
+        Uses self.lstm_feature_columns (57 one-hot expanded) for reconstruction,
+        NOT self.feature_columns (22 raw baseline columns).
+        
         Returns:
             List of 57 floats or None on error
         """
         try:
-            if not self.feature_columns:
-                logger.error("Feature columns not loaded - cannot extract features")
+            if not self.lstm_feature_columns:
+                logger.error("LSTM feature columns not loaded - cannot extract features")
                 return None
             
             features = []
@@ -354,12 +375,13 @@ class InferenceService:
                 features.append(float(val if val else 0))
             
             # Extract and one-hot encode categorical features
+            # Use lstm_feature_columns to find all one-hot categories
             for col in CATEGORICAL_COLUMNS:
                 col_val = str(event_data.get(col, '')).strip()
                 
-                # Get all possible categories for this column from training
+                # Get all possible categories for this column from training (lstm_feature_columns)
                 col_categories = set()
-                for feature_name in self.feature_columns:
+                for feature_name in self.lstm_feature_columns:
                     if feature_name.startswith(f"{col}_"):
                         # Extract the category value (format is "col_category")
                         category = feature_name[len(col)+1:]
@@ -370,15 +392,13 @@ class InferenceService:
                     one_hot = 1.0 if col_val == category else 0.0
                     features.append(one_hot)
             
-            # Verify length matches expected feature count
-            if len(features) != len(self.feature_columns):
-                logger.warning(
+            # Verify length matches LSTM expected feature count
+            if len(features) != len(self.lstm_feature_columns):
+                logger.error(
                     f"Feature count mismatch: extracted {len(features)}, "
-                    f"expected {len(self.feature_columns)}. Padding with zeros."
+                    f"expected {len(self.lstm_feature_columns)}. Feature extraction failed."
                 )
-                while len(features) < len(self.feature_columns):
-                    features.append(0.0)
-                features = features[:len(self.feature_columns)]
+                return None
             
             return features
             

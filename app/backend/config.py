@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     BASELINE_PROFILES: str = os.path.join(MODELS_DIR, "baseline_profile.pkl")
     LSTM_THRESHOLD: str = os.path.join(MODELS_DIR, "lstm_threshold.pkl")
     FEATURE_COLUMNS: str = os.path.join(MODELS_DIR, "feature_columns.pkl")
+    LSTM_FEATURE_COLUMNS: str = os.path.join(MODELS_DIR, "lstm_feature_columns.pkl")
     SCALER: str = os.path.join(MODELS_DIR, "scaler.pkl")
     
     # Model parameters
