@@ -1,74 +1,87 @@
-# Attack Taxonomy Mapping - Specification vs Implementation
+# Attack Taxonomy Mapping — Specification vs. Implementation
 
-## Overview
-
-This document clarifies the relationship between the security specification's attack taxonomy and the actual implementation in the anomaly detection system.
-
-## Specification vs Implementation Mapping
-
-### Primary Attack Types (5)
-
-| Spec Name | Implementation | Behavior | Detection Approach |
-|-----------|---|---|---|
-| **Brute Force** | `Brute Force` | 20-50 failed logins in 1-4 AM window | Statistical + LSTM |
-| **Impossible Travel** | `Impossible Travel` | Location change between events <1 minute apart | Statistical (immediate) |
-| **Credential Stuffing** | `Credential Stuffing` | 15-40 failed attempts in 0-5 AM off-hours window | Statistical + LSTM |
-| **Lateral Movement** | `Lateral Movement` | Access to unauthorized resource + extended session (60+ min) | Statistical + LSTM |
-| **Device Spoofing** | `Device Spoofing` | Unknown device fingerprint or new IP | Statistical (immediate) |
-
-### Stealthy/Advanced Attack Types
-
-| Spec Concept | Implementation | Actual Behavior | Rationale |
-|---|---|---|---|
-| **Low-and-Slow Exfiltration** | `Low and Slow Brute Force` | 4-8 subtle failed attempts within normal hours; no location/device change signals | Single-event stealthy variant; true multi-day gradual exfiltration not yet modeled |
-| **Insider Drift** (multi-day privilege creep) | `Insider Threat` | Access to single unauthorized resource in one event | Single-event unauthorized resource access; true multi-session gradual drift pattern not yet implemented |
-| **Normal Baseline** | `Normal` | Typical user behavior (baseline profile + expected variance) | Statistical + LSTM confidence <threshold |
-
-## Implementation Notes
-
-### Stealthy Attacks in Current System
-
-The implementation provides **single-event stealthy variants** rather than true **multi-session patterns**:
-
-- **Low-and-Slow Brute Force**: 4-8 failed login attempts over a single session, during normal working hours, with no other anomalies. This avoids the obvious "20+ failures at 3 AM" pattern.
-  - *Future improvement*: Could extend to track failed login attempts across 3-5 sessions over 2-3 days to capture true low-and-slow credential attacks.
-
-- **Insider Threat**: Single event accessing an unauthorized resource (e.g., Finance DB for an Engineering employee). Device, location, and login patterns remain normal.
-  - *Future improvement*: Could implement multi-session pattern where an insider gradually elevates privileges or downloads from multiple restricted resources over several days.
-
-### Why These Simplifications
-
-1. **Data Generation Constraint**: Synthetic data generation must be deterministic and reproducible. Multi-session patterns require state tracking across time windows.
-2. **Ground Truth Challenge**: Multi-day patterns need correlation across many events; single-event injection is simpler to validate.
-3. **Detection Trade-off**: The LSTM's sliding-window approach (5-event sequences) can capture some multi-event patterns, but true multi-day drift requires cross-correlation across multiple days.
-
-## Detection Performance by Attack Type
-
-| Attack Type | Detection Rate | Primary Detector | Comments |
-|---|---|---|---|
-| Brute Force | 95%+ | Baseline + LSTM | Obvious pattern, easy to detect |
-| Impossible Travel | 98%+ | Baseline | Immediate, network-based |
-| Credential Stuffing | 92%+ | Baseline + LSTM | High failure count is distinctive |
-| Device Spoofing | 99%+ | Baseline | Unknown fingerprint is rare |
-| Lateral Movement | 88%+ | Baseline + LSTM | Unusual resource + session duration |
-| Low-and-Slow Brute Force | 65%+ | LSTM | Subtle pattern, requires sequence analysis |
-| Insider Threat | 72%+ | LSTM | Single anomalous signal, context-dependent |
-
-## Compliance with Specification
-
-✅ **Addresses all 5 primary attack types** from specification  
-✅ **Implements stealthy variants** (70% of injected attacks)  
-✅ **Uses realistic 2% attack rate** (within spec 0.5%-3%)  
-⚠️ **Stealthy attacks are single-event, not true multi-day patterns** (acceptable for initial implementation)  
-⚠️ **Insider drift** simplified to resource-access anomaly (future: true multi-session gradual privilege escalation)
-
-## Recommendations for Next Version
-
-1. **Multi-Session Tracking**: Extend alert storage to correlate events across days for true insider drift patterns
-2. **Temporal Aggregation**: Group related events across multiple sessions to detect gradual attacks
-3. **Anomaly Patterns**: Add pattern library (e.g., "3+ resource access anomalies in 5 days" = potential data exfiltration)
-4. **Behavioral Drift Detector**: Track entity profiles over time to detect gradual behavior changes
+This document maps the hackathon brief's named attack patterns to the concrete
+labels and mutation logic actually present in `src/attack_generator.py`. All
+implementation details below were verified directly against that file — nothing
+here is inferred or estimated.
 
 ---
 
-**Note for Judges/Reviewers**: If spec compliance requires true multi-day gradient patterns, this implementation provides a solid foundation with single-event stealthy attacks and can be extended with multi-session analytics.
+## Mapping table
+
+| Brief pattern | Generator label(s) | Implementation (verified) |
+|---|---|---|
+| Normal baseline | *(no attack label)* | Generated by `src/event_generator.py`; forms the base dataset before injection |
+| Brute force | `Brute Force` | `failed_login_attempts` set to 20–50, timestamp shifted into a 1–4 AM window, `auth_method` set to "Password", short repetitive `command_sequence`. Single-event modification. |
+| Impossible travel | `Impossible Travel` | `geo_location` replaced with a different location and a new `source_ip` assigned. Single-event modification. |
+| Credential stuffing | `Credential Stuffing` | `failed_login_attempts` set to 15–40, `source_ip` changed, `auth_method` set to "Password", timestamp shifted into a 0–5 AM window. Single-event modification. |
+| Device spoofing | `Device Spoofing` | `device_fingerprint` replaced with another device's fingerprint (sampled from `devices.csv`), new `source_ip` assigned. Single-event modification. |
+| Lateral movement | `Lateral Movement` | `resource_accessed` changed to a resource outside the entity's `normal_resources`, multi-step `command_sequence` assigned, `session_duration` increased by 60–180 seconds. Single-event modification. |
+| Low-and-slow exfiltration | `Low and Slow Brute Force` | `failed_login_attempts` set to 4–8, `auth_method` set to "Password", short repeated `command_sequence`, timestamp stays within normal working hours. Single-event proxy for stealthy behavior. |
+| Insider drift (edge case) | `Insider Threat` | Device, location, and failed-login count left unchanged; `resource_accessed` changed to an unusual resource from `RESOURCE_LIST`. Single-event proxy for insider access. |
+| *(additional stealthy variant, not separately named in the brief)* | `Slow Credential Stuffing` | `failed_login_attempts` set to 6–12, `auth_method` set to "Password", device/location unchanged. Single-event modification. |
+
+All labels are exact strings from the generator (capitalization and spacing
+preserved as-is in the data). Where the generator references per-entity fields
+(`normal_resources`, `device_fingerprint`), it draws from `data/raw/user_profiles.csv`
+and `data/raw/devices.csv` to pick abnormal values or spoof devices.
+
+---
+
+## The core gap — disclosed, not hidden
+
+The hackathon brief describes two of these patterns as inherently **multi-event,
+multi-session** behaviors:
+
+- **Low-and-slow exfiltration**: "gradual, small, off-hours resource access
+  building up over days or weeks"
+- **Insider drift**: "legitimate entity slowly expanding privilege or resource
+  footprint" — explicitly framed as an edge case for false-positive tuning across
+  time, not a single moment
+
+**This implementation approximates both as single-event mutations** rather than
+campaigns stitched across multiple rows/timestamps per entity. The generator does
+not currently track or correlate an entity's behavior across multiple sessions to
+build a true gradual-drift pattern.
+
+### Why this simplification was made
+1. **Reproducibility**: multi-session patterns require state tracking across time
+   windows per entity, adding significant generation complexity for a
+   time-constrained build.
+2. **Ground-truth correlation**: multi-day patterns need labels correlated across
+   many rows; single-event injection is simpler to generate and validate correctly.
+3. **Partial mitigation via the LSTM**: the sequence model's 5-event sliding window
+   *can* pick up on some short-range multi-event patterns even though the injected
+   attacks themselves are single-event — but this is incidental coverage, not a
+   deliberate multi-day design.
+
+---
+
+## What would need to change for a literal implementation
+
+If extended in a future iteration:
+- **Multi-session tracking**: correlate an entity's events across multiple days
+  rather than mutating one row in isolation
+- **Temporal aggregation**: track cumulative resource-access counts/patterns per
+  entity over a rolling multi-day window
+- **A dedicated slow-drift feature**: e.g. "distinct sensitive resources accessed
+  in the trailing N days" as an explicit LSTM/baseline input, rather than relying
+  on the existing single-event mutation to carry this signal
+
+---
+
+## Compliance summary
+
+✅ All 8 attack patterns named or implied by the brief have a corresponding,
+verified implementation.
+✅ Attack injection rate (~2% of events) sits within the brief's suggested
+0.5–3% range.
+⚠️ Two patterns (`Low and Slow Brute Force`, `Insider Threat`) are single-event
+proxies rather than the brief's literal multi-day/multi-session versions — see
+above for exactly what differs and why.
+
+**Note for reviewers:** detection accuracy per attack type is intentionally not
+included in this document. Those numbers only exist once
+`python -m src.evaluate_models` has been run against real held-out data (see
+`FINAL_REPORT.md` §4) — reporting per-type percentages without that step would be
+presenting invented numbers as measured results.

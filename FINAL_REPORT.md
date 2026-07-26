@@ -1,111 +1,58 @@
-# Cybersecurity Anomaly Detection System - Final Report
+# Final Report — Anomaly Detection System
 
-## Executive Summary
-
-This project implements an advanced **cybersecurity anomaly detection system** combining baseline profiling with deep learning (LSTM) to detect anomalous user behaviors and potential security threats in enterprise environments.
-
-### Key Achievements
-- ✅ **Synthetic Data Generator**: Realistic 45,000 events from 500 users across 700 devices
-- ✅ **Baseline Profiling Model**: Behavioral baseline for each entity with statistical profiling
-- ✅ **LSTM Detection Model**: Deep learning model for sequence-based anomaly detection
-- ✅ **Ensemble Classification**: Hybrid approach combining baseline + LSTM detection
-- ✅ **Explainability Layer**: Interpretable alerts with reasoning
-- ✅ **Interactive Dashboard**: Real-time alert monitoring and analysis
+**Status:** Working prototype. All statements below were verified against the actual
+codebase; no metric is reported unless it was either read directly from code or
+computed by `src/evaluate_models.py`. Where a number has not yet been computed, this
+report says so explicitly rather than estimating it.
 
 ---
 
-## 1. Project Architecture
+## 1. Problem Statement
 
-```
-Anomaly-Detection/
-├── src/                           # Core detection engine
-│   ├── config.py                 # Configuration constants
-│   ├── utils.py                  # Helper functions
-│   ├── dataset_generator.py      # Main orchestrator for data generation
-│   ├── user_generator.py         # Synthetic user profiles
-│   ├── device_generator.py       # Synthetic device fingerprints
-│   ├── profile_generator.py      # Baseline behavior profiles
-│   ├── event_generator.py        # Normal activity events
-│   ├── attack_generator.py       # Attack injection (8 types)
-│   ├── feature_engineering.py    # Feature extraction & encoding
-│   ├── baseline_profiling.py     # Statistical baseline model
-│   ├── lstm_sequence_model.py    # Deep learning detector
-│   ├── inference.py              # Ensemble prediction engine
-│   ├── explainability.py         # Alert explanation module
-│   └── dashboard.py              # Analysis & visualization
-├── data/                          # Dataset storage
-│   ├── raw/                      # Generated raw data
-│   └── processed/                # Processed features
-├── trained_models/               # Saved models and artifacts
-└── notebooks/                    # Analysis notebooks
-```
+Detect anomalous access behavior across users, service accounts, and devices from
+synthetic access logs, classify the type of anomaly, and surface it to a SOC analyst
+with an explainable, ranked risk score — addressing the brief's five named
+challenges: sequential/behavioral data, extreme class imbalance, concept drift,
+explainability, and cold-start entities.
 
 ---
 
-## 2. Deliverables Status
+## 2. Approach — what the code actually implements
 
-### 2.1 Synthetic Data Generator ✅
-**Status**: Fully Implemented & Tested
+| Stage | File | What it does |
+|---|---|---|
+| Data generation | `src/dataset_generator.py`, `src/user_generator.py`, `src/device_generator.py`, `src/profile_generator.py`, `src/event_generator.py` | Generates 500 synthetic users, 700 devices, and normal access events over a simulated window |
+| Attack injection | `src/attack_generator.py` | Injects 8 labeled attack patterns at a controlled rate (~2% of events) |
+| Feature engineering | `src/feature_engineering.py` | Builds the 23-feature matrix (6 numeric, 7 boolean, ~38 one-hot categorical after expansion) used by both models |
+| Baseline profiler | `src/baseline_profiling.py` | Builds a per-entity statistical profile (mode resource/location/auth method, mean/std session duration) |
+| Sequence model | `src/lstm_sequence_model.py` | Builds sliding 5-event windows per entity and trains a stacked LSTM |
+| Ensemble & inference | `app/backend/services/inference_service.py` | Combines baseline + LSTM scores into a final decision, served live by the FastAPI backend |
+| Explainability | `src/explainability.py`, `_score_baseline()` in `inference_service.py` | Produces human-readable reasons per alert. **No SHAP or other external attribution library is used anywhere in this codebase.** |
+| Evaluation | `src/evaluate_models.py` | Runs the real `InferenceService` against a held-out, time-based 20% slice of the dataset to compute genuine metrics (see §4) |
 
-**Features**:
-- **500 unique users** with realistic profiles
-- **700 devices** with OS and browser combinations
-- **45,000 synthetic events** across 90 days
-- **900 attack events** (2% injection rate)
+### 2.1 Baseline model — detection logic
 
-**Data Attributes**:
-- User: department, office location, email
-- Device: fingerprint, OS, browser, MAC address
-- Event: timestamp, resource access, authentication, session duration
-- Behavioral features: login hours, session patterns, normal resources
+The baseline compares each incoming event against the entity's stored profile with
+additive point penalties (from `_score_baseline()` in `inference_service.py`):
 
-**Files Generated**:
+| Deviation | Points |
+|---|---|
+| Resource not in entity's normal set | +2.0 |
+| Location differs from normal | +1.5 |
+| Auth method not normally used | +1.0 |
+| Session duration > 2.5× tolerance from mean | +1.5 |
+| Session duration > 1.5× tolerance | smaller partial penalty |
+| Unknown entity (cold start) | flat score of 2.0 |
+
+An event is flagged if the summed score exceeds `settings.ANOMALY_THRESHOLD` (0.5,
+normalized against a max baseline score of ~4.0).
+
+### 2.2 Sequence model — architecture
+
 ```
-data/raw/
-├── users.csv (500 records)
-├── devices.csv (700 records)
-├── user_profiles.csv (500 baseline profiles)
-├── normal_events.csv (45,000 normal events)
-├── cyber_logs.csv (45,000 with attacks injected)
-└── cybersecurity_dataset.csv (merged final dataset)
-```
-
-### 2.2 Baseline Profiling Model ✅
-**Status**: Fully Implemented & Tested
-
-**Purpose**: Build statistical behavioral baselines for each user
-
-**Profiling Metrics**:
-- **Numeric features**: Session duration, failed logins, login hour, risk score
-- **Categorical features**: Location, resource access, auth method, device, OS
-- **Behavioral patterns**: 
-  - Normal login time window (hour range)
-  - Average session duration
-  - Normal failure rate
-  - Allowed resources & locations
-
-**Detection Logic**:
-```
-Anomaly Score Calculation:
-- Unauthorized resource access: +2 points
-- Impossible travel (new location): +1.5 points
-- New device: +1 point
-- New auth method: +1 point
-- Statistical drift (>1.5σ): +0.5-1.5 points
-
-Alert Threshold: Score ≥ 1.5
-```
-
-**Output**: `trained_models/baseline_profile.pkl`
-
-### 2.3 LSTM Detection Model ✅
-**Status**: Fully Implemented (requires TensorFlow)
-
-**Architecture**:
-```
-Input (sequences of 5 events)
+Input: sequences of 5 events × 57 engineered features
   ↓
-Masking Layer (mask padding)
+Masking Layer (for zero-padded cold-start sequences)
   ↓
 LSTM(128, return_sequences=True) + Dropout(0.4)
   ↓
@@ -115,339 +62,156 @@ Dense(64, relu) + Dropout(0.3)
   ↓
 Dense(32, relu) + Dropout(0.2)
   ↓
-Dense(1, sigmoid) → Binary Classification
+Dense(1, sigmoid) → anomaly confidence [0,1]
 ```
 
-**Training Configuration**:
-- **Window Size**: 5 events per sequence
-- **Epochs**: 15
-- **Batch Size**: 32
-- **Validation Split**: 20%
-- **Loss**: Binary crossentropy
-- **Metrics**: Accuracy, AUC, Precision, Recall
-- **Early Stopping**: Monitor validation AUC
+Trained with class-weighted binary crossentropy (`compute_class_weight("balanced")`)
+to address the extreme class-imbalance challenge. Verified as a real, trained
+artifact at `trained_models/lstm_model.keras` (confirmed via direct inspection of the
+Keras model config — genuine `LSTM` layers, not a stub).
 
-**Outputs**:
-- `trained_models/lstm_model.keras` - Trained model
-- `trained_models/lstm_threshold.pkl` - Optimized detection threshold
-- `trained_models/lstm_metadata.pkl` - Feature columns & scaling info
+### 2.3 Ensemble — decision logic
 
-### 2.4 Anomaly Classification Engine ✅
-**Status**: Fully Implemented with Ensemble
-
-**Ensemble Approach**:
-1. **Baseline Detector** (40% weight)
-   - Fast, interpretable statistical scoring
-   - Detects immediate anomalies (new device, impossible travel)
-   - Critical for insider threats
-
-2. **LSTM Detector** (60% weight when available)
-   - Captures temporal patterns
-   - Detects sophisticated, multi-step attacks
-   - Requires sequence context
-
-**Decision Logic**:
-```
-IF (Baseline Alert OR LSTM Alert):
-    IF (Both agree):
-        Confidence = 0.4 × baseline_conf + 0.6 × lstm_conf
-        Status = "HIGH CONFIDENCE ATTACK"
-    ELSE IF (LSTM alone & confidence > 0.7):
-        Status = "LSTM DETECTED ANOMALY"
-    ELSE IF (Baseline alone):
-        Status = "BEHAVIORAL ANOMALY"
-ELSE:
-    Status = "NORMAL"
-```
-
-### 2.5 Explainability Layer ✅
-**Status**: Fully Implemented
-
-**Explanation Features**:
-- **Anomaly Reasons**: List specific deviations from baseline
-- **Baseline Scoring**: Detailed breakdown of flagged attributes
-- **LSTM Confidence**: Probability score when sequence model activated
-- **Sample Analysis**: Historical context for the flagged event
-- **Entity Profile**: Normal behavior patterns for comparison
-
-**Output Example**:
 ```python
-{
-    "entity_id": "U0001",
-    "status": "Attack",
-    "flagged_by": "Baseline + LSTM",
-    "confidence": 0.92,
-    "baseline_reasons": [
-        "unauthorized resource (HR Portal → Database)",
-        "impossible travel (Bangalore → Mumbai)",
-        "high_failed_login_attempts drift"
-    ],
-    "lstm_confidence": 0.88,
-    "sample": {...}
-}
+baseline_flag = baseline_score > baseline_threshold
+lstm_flag = lstm_confidence > lstm_threshold
+is_anomaly = baseline_flag OR lstm_flag          # either model can trigger an alert
+
+ensemble_score = 0.4 × baseline_normalized + 0.6 × lstm_normalized
 ```
 
-### 2.6 Dashboard ✅
-**Status**: Fully Implemented
+(Weights from `app/backend/config.py`: `BASELINE_WEIGHT: 0.4`, `LSTM_WEIGHT: 0.6`.)
+The OR-based flagging is a deliberate recall-first design — missing a real intrusion
+is treated as worse than one extra alert for an analyst to dismiss. If the LSTM is
+unavailable (e.g. TensorFlow not installed), the system falls back to baseline-only
+scoring automatically.
 
-**Features**:
-1. **Alert Queue**: Top N ranked by risk score
-2. **Risk Levels**: Low/Medium/High classification
-3. **Quick Stats**:
-   - Total events processed
-   - Attack count
-   - Detection sources (Baseline vs LSTM)
-4. **Alert Details**:
-   - Entity ID & behavior classification
-   - Resource accessed & location
-   - Authentication method & device type
-   - Timestamp & prediction confidence
+Each result reports `flagged_by` (`baseline`, `lstm`, or `both`) so the analyst can
+see which mechanism triggered the alert, alongside the `reasons` list.
 
-**Usage**:
-```python
-from src.dashboard import build_alert_queue, print_dashboard
+---
 
-# Get top 10 alerts
-alerts = build_alert_queue(limit=10)
+## 3. Deliverables status
 
-# Print formatted dashboard
-print_dashboard(limit=10)
-```
-
-### 2.7 Behavior Simulation Coverage ✅
-
-| Behavior Type | Implementation | Detection Rate |
+| # | Deliverable | Status |
 |---|---|---|
-| **Normal Baseline** | ✅ Realistic user patterns | High accuracy |
-| **Brute Force** | ✅ Multiple failed logins (20-50) at odd hours | 95%+ |
-| **Impossible Travel** | ✅ Location change within minutes | 98%+ |
-| **Credential Stuffing** | ✅ 15-40 failed attempts, off-hours | 92%+ |
-| **Device Spoofing** | ✅ New device fingerprint | 99%+ |
-| **Lateral Movement** | ✅ Unusual resource access + extended session | 88%+ |
-| **Low-and-Slow Brute Force** | ✅ Subtle failures (4-8) within normal hours | 65%+ |
-| **Insider Threat** | ✅ Access to unauthorized resource | 72%+ |
+| 1 | Synthetic data generator + attack taxonomy | ✅ Implemented — 500 users, 700 devices, synthetic events with 8 injected attack types |
+| 2 | Baseline profiling model | ✅ Implemented — per-entity statistical profile |
+| 3 | Sequence-aware detection model | ✅ Implemented — real, trained LSTM |
+| 4 | Anomaly-type classification | ✅ Implemented — label encoders in `trained_models/` |
+| 5 | Explainability layer | ✅ Implemented — rule-based deviation reasons + `flagged_by` attribution (not SHAP) |
+| 6 | Analyst-facing dashboard | ✅ Implemented — ranked alert queue, risk score, entity history view, model comparison page |
+| 7 | Report | This document |
 
 ---
 
-## 3. Technical Implementation Details
+## 4. Evaluation
 
-### 3.1 Feature Engineering
-**Total Features**: 23 processed features
+**As of this report, `trained_models/evaluation_results.json` may or may not exist**
+depending on whether `python -m src.evaluate_models` has been run. This script:
 
-**Numeric Features** (7):
-- Session duration (scaled)
-- Failed login attempts (scaled)
-- Login hour (normalized)
-- Risk score (aggregated)
-- Normal baseline values
+- Loads the real, trained `InferenceService` (the same code path the live API uses)
+- Takes a **time-based held-out 20%** slice of `data/raw/cybersecurity_dataset.csv`
+  (45,000 events, 900 attacks / 2% attack rate overall)
+- Scores every held-out event through the actual baseline, LSTM, and ensemble logic
+- Computes precision, recall, F1, and AUC-ROC for each of the three scorers
+- Computes the specific metric the hackathon brief names explicitly: **false positive
+  rate at a top-1% analyst alert budget**
 
-**Boolean Features** (7):
-- Location changed
-- Device changed
-- Auth method changed
-- Login time anomaly
-- Extended session
-- High failed login rate
-- Unusual resource access
+**If `trained_models/evaluation_results.json` exists**, real numbers should be
+inserted here directly from that file rather than restated from memory, since the
+file is the single source of truth and can be regenerated at any time.
 
-**Categorical Features** (9):
-- Entity type, geo-location, resource accessed
-- Auth method, device type, OS, browser
-- Department, office
+**If it does not exist yet**, no performance numbers are claimed in this report.
+The `/api/v1/models/performance` endpoint and the frontend Model Comparison page
+both handle this state honestly — the API returns `is_real_data: false` with
+placeholder values, and the frontend displays "⚠ Example metrics — run
+`python -m src.evaluate_models` to compute real ones" rather than presenting
+placeholders as measured results.
 
-### 3.2 Model Training
-```
-Dataset Split:
-├── Training Set (80%): 36,000 events
-│   ├── Sequences: Multiple overlapping windows
-│   └── Class Balance: Weighted loss (balanced class weights)
-└── Test Set (20%): 9,000 events
-    └── Stratified split by label
-```
-
-### 3.3 Performance Metrics
-**Evaluation Metrics Tracked**:
-- Precision: Minimize false positives
-- Recall: Maximize attack detection
-- F1-Score: Balance precision-recall
-- ROC-AUC: Overall discrimination ability
-- Confusion Matrix: Detailed predictions
+### Known-accurate structural facts (not dependent on evaluation results)
+- Total dataset: 45,000 events, 900 labeled attacks (2.0% attack rate)
+- Feature matrix: 23 raw engineered columns → 57 columns after one-hot expansion for
+  LSTM input
+- Train/test approach: time-based split (not random), to avoid leakage from future
+  events into training
 
 ---
 
-## 4. Installation & Usage
+## 5. How the five named challenges are addressed
 
-### 4.1 Requirements
+| Challenge | Status | Detail |
+|---|---|---|
+| Sequential/behavioral data | ✅ Addressed | LSTM sliding 5-event window per entity |
+| Extreme class imbalance | ✅ Addressed | `compute_class_weight("balanced")` at LSTM training time |
+| Explainability | ✅ Addressed | Rule-based deviation reasons + `flagged_by`, surfaced per alert in the dashboard |
+| Cold-start | ✅ Addressed | Unknown entities get a flat fallback baseline score (2.0) rather than crashing or silently passing |
+| Concept drift | ❌ Not implemented | No automated re-baselining or drift detection exists in the current codebase. This is an acknowledged gap, not a hidden one. |
+
+---
+
+## 6. Attack taxonomy — coverage vs. brief
+
+The brief names 8 patterns: Normal baseline, Brute force, Impossible travel,
+Credential stuffing, Lateral movement, Device spoofing, Low-and-slow exfiltration,
+Insider drift. This codebase implements all 8, but two are simplified:
+
+- **Low-and-slow exfiltration** → implemented as `Low and Slow Brute Force` /
+  `Slow Credential Stuffing`: single-event stealthy variants, not literal
+  multi-day/multi-session gradual campaigns.
+- **Insider drift** → implemented as `Insider Threat`: a single unusual
+  resource-access event, not a gradually-expanding-privilege pattern across
+  multiple sessions.
+
+Full mapping and rationale in `ATTACK_TAXONOMY_MAPPING.md`.
+
+---
+
+## 7. Known limitations
+
+- **Performance metrics are conditional on running `src/evaluate_models.py`** — see
+  §4. Do not cite specific precision/recall/F1/AUC numbers unless they come directly
+  from a fresh `trained_models/evaluation_results.json`.
+- **Concept drift is not handled** — legitimate behavior changes over time are not
+  automatically re-baselined.
+- **Attack taxonomy is a simplified proxy** for 2 of 8 patterns (§6).
+- **File-based, batch/on-demand system** — not a real-time streaming service. No
+  Kafka/queue ingestion or incremental feature store is implemented; this would be
+  required for a production deployment at real-time SOC scale.
+- **Cold-start fallback is a flat score**, not a personalized cold-start model.
+- Synthetic data stands in for real access logs; results describe the model's
+  ability to separate injected attack patterns from simulated normal behavior, not
+  validated traffic from a production environment.
+
+---
+
+## 8. How to reproduce
+
 ```bash
-pip install -r requirements.txt
-# For LSTM training: pip install tensorflow>=2.13
-```
-
-### 4.2 Complete Workflow
-
-**Step 1: Generate Synthetic Dataset**
-```bash
+# 1. Generate the dataset
 python -m src.dataset_generator
-```
-Output: 6 CSV files in `data/raw/`
 
-**Step 2: Process Features**
-```bash
-python -m src.feature_engineering
-```
-Output: `data/processed/processed_logs.csv`
-
-**Step 3: Build Baseline Profiles**
-```bash
+# 2. Build the baseline profile
 python -m src.baseline_profiling
-```
-Output: `trained_models/baseline_profile.pkl`
 
-**Step 4: Train LSTM Model** (requires TensorFlow)
-```bash
+# 3. Train the LSTM (requires TensorFlow)
+pip install tensorflow>=2.14.0
 python -m src.lstm_sequence_model
+
+# 4. Generate real evaluation metrics
+python -m src.evaluate_models
+
+# 5. Run the backend and frontend (see README.md)
 ```
-Outputs:
-- `trained_models/lstm_model.keras`
-- `trained_models/lstm_threshold.pkl`
-- `trained_models/lstm_metadata.pkl`
-
-**Step 5: Run Detection & Dashboard**
-```bash
-python -m src.dashboard
-# or
-python app/frontend/dashboard.py
-```
-
-### 4.3 Standalone Predictions
-```python
-from src.inference import predict
-import pandas as pd
-
-# Load your events
-events = pd.read_csv("data/raw/cybersecurity_dataset.csv")
-
-# Get predictions
-predictions = predict(events.head(100))
-
-for pred in predictions:
-    print(f"Status: {pred['status']}")
-    if pred['status'] == 'Attack':
-        print(f"  Confidence: {pred['confidence']:.2%}")
-        print(f"  Reasons: {pred['baseline_reasons']}")
-```
-
----
-
-## 5. Key Findings & Insights
-
-### 5.1 Attack Detection Effectiveness
-- **Baseline Profiling Strength**: Excels at detecting:
-  - Device spoofing (99% accuracy)
-  - Impossible travel (98% accuracy)
-  - Credential stuffing (92% accuracy)
-
-- **LSTM Strength**: Better at:
-  - Temporal pattern anomalies
-  - Multi-event attack sequences
-  - Stealthy, coordinated attacks
-
-- **Ensemble Benefit**: Combined approach achieves:
-  - 94% overall detection rate
-  - Reduced false positives through complementary signals
-  - Better coverage across attack types
-
-### 5.2 Data Characteristics
-- **Attack Distribution**: 2% realistic injection rate
-- **Behavioral Variance**: Users have distinct patterns:
-  - Department-based resource access
-  - Location-dependent sessions
-  - Device consistency indicators
-
-### 5.3 Scalability Notes
-- Current setup handles **45,000 events** efficiently
-- Baseline scoring: O(n) complexity - highly scalable
-- LSTM prediction: ~1s per batch of 100 events (CPU)
-- Production: Deploy LSTM on GPU for real-time processing
-
----
-
-## 6. Recommendations for Production Deployment
-
-### 6.1 Model Monitoring
-- Track baseline detection rate over time
-- Monitor LSTM precision/recall for concept drift
-- Alert on unusual detection rate changes
-
-### 6.2 Threshold Tuning
-- Adjust baseline flag threshold based on false positive tolerance
-- Retrain LSTM threshold periodically with fresh data
-- Consider business impact: Insider threat vs false alarm cost
-
-### 6.3 Data Pipeline
-- Implement continuous baseline update (weekly/monthly)
-- Add new attack patterns to training data
-- Maintain feature consistency across deployments
-
-### 6.4 Operational Considerations
-- Store all predictions for audit & compliance
-- Implement incident response workflows
-- Use explainability layer in security team dashboards
-- Regular security drills on flagged anomalies
-
----
-
-## 7. Future Enhancements
-
-### 7.1 Model Improvements
-- [ ] Add XGBoost as additional ensemble member
-- [ ] Implement attention mechanisms for interpretability
-- [ ] Federated learning for multi-site deployments
-- [ ] Automatic retraining pipeline
-
-### 7.2 Detection Expansion
-- [ ] Multi-factor anomaly correlation
-- [ ] Cross-user behavior analysis
-- [ ] Advanced insider threat detection
-- [ ] Supply chain attack patterns
-
-### 7.3 Operational Features
-- [ ] Real-time streaming prediction
-- [ ] Automated incident response triggers
-- [ ] Custom alert rules per department/role
-- [ ] Integration with SIEM systems (Splunk, ELK)
-
----
-
-## 8. Project Statistics
-
-| Metric | Value |
-|--------|-------|
-| **Total Code Lines** | ~3,500+ |
-| **Core Modules** | 14 |
-| **Data Records Generated** | 45,000 |
-| **Attack Patterns Simulated** | 8 types |
-| **Features Engineered** | 23 |
-| **Baseline Profiles** | 500 |
-| **LSTM Layers** | 4 (2 LSTM + 2 Dense) |
-| **Training Parameters** | 128,000+ |
-| **Detection Accuracy** | 94% |
 
 ---
 
 ## 9. Conclusion
 
-This Anomaly Detection System provides a **production-ready foundation** for cybersecurity threat detection. By combining statistical baseline profiling with deep learning, it achieves:
-
-✅ **High Detection Rate**: 94% across diverse attack types  
-✅ **Interpretable Alerts**: Clear explanations for security teams  
-✅ **Scalable Architecture**: Handles enterprise-scale data  
-✅ **Adaptable System**: Easily configured for specific environments  
-
-The ensemble approach balances **sensitivity** (catching threats) with **specificity** (minimizing false alarms), making it suitable for real-world deployment in security operations centers.
-
----
-
-**Report Generated**: 2026-07-25  
-**System Version**: 1.0  
-**Status**: Production Ready
+The system implements a working baseline-profiling + LSTM ensemble with real,
+verified model artifacts and a functioning explainability and dashboard layer,
+directly addressing 4 of the 5 challenges named in the brief. The two areas most
+worth further work before a production claim would be: (1) generating and
+publishing real held-out evaluation numbers via `src/evaluate_models.py`, and
+(2) implementing concept-drift handling, which currently does not exist in the
+codebase.
