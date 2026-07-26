@@ -5,7 +5,10 @@
 File-backed, batch/on-demand pipeline: synthetic data generation → feature
 engineering → model artifact creation → FastAPI inference → React frontend.
 No external queue or database is used — everything is file-backed on disk, and
-alerts are held in memory for the demo.
+alerts are held in memory for the demo. Two background services extend this
+pipeline at runtime: a `DriftMonitor` that watches for feature-distribution
+drift and triggers retraining, and a `ColdStartService` that builds profiles
+for new entities as their event history accumulates.
 
 ```mermaid
 flowchart LR
@@ -15,6 +18,8 @@ flowchart LR
   LSTMTrain["LSTM Training<br/>src/lstm_sequence_model.py<br/>-> trained_models/lstm_model.keras"]
   Artifacts["Trained Artifacts<br/>trained_models/*.pkl, *.keras"]
   Backend["FastAPI Backend<br/>app/backend/main.py<br/>loads DataService, InferenceService, AlertService"]
+  Drift["DriftMonitor<br/>app/backend/services/drift_monitor.py<br/>triggers retraining on detected drift"]
+  ColdStart["ColdStartService<br/>app/backend/services/cold_start_service.py<br/>builds profiles for new entities"]
   API["API Routers<br/>analytics, models, alerts, anomalies, entities, health"]
   Frontend["React Dashboard<br/>app/frontend/src, routes in App.jsx"]
 
@@ -23,12 +28,14 @@ flowchart LR
   Baseline --> Artifacts
   LSTMTrain --> Artifacts
   Artifacts --> Backend --> API --> Frontend
+  Backend --> Drift --> Artifacts
+  Backend --> ColdStart --> Artifacts
 ```
 
 ## Data flow
 
-1. `app/backend/main.py` initializes `DataService`, `InferenceService`, and
-   `AlertService` on startup.
+1. `app/backend/main.py` initializes `DataService`, `InferenceService`,
+   `AlertService`, `DriftMonitor`, and `ColdStartService` on startup.
 2. `InferenceService` loads artifacts from `trained_models/`: baseline
    profiles, scaler, both feature-column lists (baseline's 22-column list and
    the LSTM's separate 57-column one-hot-expanded list — these are distinct
@@ -37,7 +44,12 @@ flowchart LR
 3. Incoming events are scored by the baseline profiler and, if the LSTM is
    available, by the sequence model; both are combined in
    `_ensemble_decision()` in `app/backend/services/inference_service.py`.
-4. Results are exposed via REST routers under `/api/v1/*` and consumed by the
+4. In parallel, `DriftMonitor` periodically compares feature distributions
+   across time windows and triggers retraining (attack-type classifier +
+   baseline profile rebuild) when drift crosses a threshold; `ColdStartService`
+   buffers events for unrecognized entities and builds a real baseline profile
+   once enough history accumulates.
+5. Results are exposed via REST routers under `/api/v1/*` and consumed by the
    React frontend.
 
 ---
@@ -67,12 +79,17 @@ graph LR
         Dashboard["Alert Dashboard"]
         Explain["Reason / Explanation"]
     end
+    subgraph Maintenance["Background Maintenance"]
+        DriftM["Drift Monitor<br/>+ Auto-Retrain"]
+        ColdS["Cold-Start<br/>Onboarding"]
+    end
 
     Generation -->|Raw| Processing
     Processing -->|Features| Detection
     Detection -->|Scores| Ensemble
     Ensemble -->|Result| Analysis
     Analysis -->|Labeled| Presentation
+    Maintenance -.->|Retrains / Rebuilds| Detection
 
     style Generation fill:#e3f2fd
     style Processing fill:#f3e5f5
@@ -80,6 +97,7 @@ graph LR
     style Ensemble fill:#fce4ec
     style Analysis fill:#e0f2f1
     style Presentation fill:#c8e6c9
+    style Maintenance fill:#ede7f6
 ```
 
 ---
@@ -96,7 +114,7 @@ graph TD
     Event -->|entity_id| Lookup["Profile Lookup<br/>(per-entity, from baseline_profile.pkl)"]
 
     Lookup --> Cold{"Entity known?"}
-    Cold -->|NO| ColdScore["Score = 2.0 (flat)<br/>'Unknown entity - cold start detected'"]
+    Cold -->|NO| ColdScore["Score = 2.0 (flat)<br/>'Unknown entity - cold start detected'<br/>Event buffered by ColdStartService"]
 
     Cold -->|YES| Check1["Resource in entity's normal set?"]
     Check1 -->|NO| Score1["+2.0<br/>'Unauthorized resource access'"]
@@ -206,6 +224,23 @@ per above).
 
 ---
 
+## Background maintenance services
+
+**DriftMonitor** (`app/backend/services/drift_monitor.py`, logic in
+`src/drift_detector.py`): runs on a timed loop, splits recent processed logs
+into an early/late window, computes a distribution-distance score per feature,
+and — if the maximum drift score crosses a threshold — triggers retraining of
+the attack-type classifier and a rebuild of the baseline profiles, then
+reloads the refreshed artifacts into `InferenceService`.
+
+**ColdStartService** (`app/backend/services/cold_start_service.py`): buffers
+incoming events per unrecognized `entity_id`; once an entity accumulates a
+minimum event count, builds a real baseline profile for it via
+`build_baseline_profiles()` and merges it into the live baseline artifact, so
+new entities graduate from the flat cold-start score to a personalized profile.
+
+---
+
 ## Key statistics (verified)
 
 | Component | Value | Source |
@@ -240,6 +275,10 @@ per above).
 **Generation & attacks**
 - `src/user_generator.py`, `src/device_generator.py`, `src/event_generator.py`
 - `src/attack_generator.py` — 8 attack types
+
+**Background maintenance**
+- `src/drift_detector.py`, `app/backend/services/drift_monitor.py` — feature drift detection + auto-retraining
+- `app/backend/services/cold_start_service.py` — new-entity profile onboarding
 
 **Output & explanation**
 - `src/dashboard.py` — CLI alert queue

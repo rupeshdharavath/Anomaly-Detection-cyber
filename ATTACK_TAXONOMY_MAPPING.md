@@ -51,9 +51,11 @@ build a true gradual-drift pattern.
 2. **Ground-truth correlation**: multi-day patterns need labels correlated across
    many rows; single-event injection is simpler to generate and validate correctly.
 3. **Partial mitigation via the LSTM**: the sequence model's 5-event sliding window
-   *can* pick up on some short-range multi-event patterns even though the injected
-   attacks themselves are single-event — but this is incidental coverage, not a
-   deliberate multi-day design.
+   *can in principle* pick up on some short-range multi-event patterns even though
+   the injected attacks themselves are single-event. In practice, the current
+   trained LSTM is not learning a useful signal at all (AUC 0.500 — see
+   `FINAL_REPORT.md` §4), so this mitigation is theoretical rather than
+   demonstrated in the current model.
 
 ---
 
@@ -87,8 +89,12 @@ An attack-type classifier was trained from labeled attack rows and saved to
 startup (if present) and uses it to populate the `attack_type` field on
 inference responses for analyst context.
 
-**Note for reviewers:** detection accuracy per attack type is intentionally not
-included in this document. Those numbers only exist once
-`python -m src.evaluate_models` has been run against real held-out data (see
-`FINAL_REPORT.md` §4) — reporting per-type percentages without that step would be
-presenting invented numbers as measured results.
+**Note for reviewers:** `python -m src.evaluate_models` has been run and produced
+real, aggregate precision/recall/F1/AUC and alert-budget metrics for the baseline,
+LSTM, and ensemble scorers — see `FINAL_REPORT.md` §4 for those numbers. That
+evaluation script does not currently break results out **per attack type**, so
+per-type detection accuracy (e.g. "Brute Force: X% detected") is not reported
+anywhere in this repository. Adding that breakdown would require extending
+`src/evaluate_models.py` to group its held-out predictions by the `attack_type`
+label rather than scoring only in aggregate; until that exists, per-type figures
+would be invented, not measured.

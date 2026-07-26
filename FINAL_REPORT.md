@@ -28,6 +28,8 @@ explainability, and cold-start entities.
 | Sequence model | `src/lstm_sequence_model.py` | Builds sliding 5-event windows per entity and trains a stacked LSTM |
 | Ensemble & inference | `app/backend/services/inference_service.py` | Combines baseline + LSTM scores into a final decision, served live by the FastAPI backend |
 | Explainability | `src/explainability.py`, `_score_baseline()` in `inference_service.py` | Produces human-readable reasons per alert. **No SHAP or other external attribution library is used anywhere in this codebase.** |
+| Concept drift | `src/drift_detector.py`, `app/backend/services/drift_monitor.py` | Periodically measures feature-distribution drift and triggers retraining when a threshold is crossed |
+| Cold start | `app/backend/services/cold_start_service.py` | Buffers events for unrecognized entities and builds a real baseline profile once enough history accumulates |
 | Evaluation | `src/evaluate_models.py` | Runs the real `InferenceService` against a held-out, time-based 20% slice of the dataset to compute genuine metrics (see §4) |
 
 ### 2.1 Baseline model — detection logic
@@ -68,7 +70,8 @@ Dense(1, sigmoid) → anomaly confidence [0,1]
 Trained with class-weighted binary crossentropy (`compute_class_weight("balanced")`)
 to address the extreme class-imbalance challenge. Verified as a real, trained
 artifact at `trained_models/lstm_model.keras` (confirmed via direct inspection of the
-Keras model config — genuine `LSTM` layers, not a stub).
+Keras model config — genuine `LSTM` layers, not a stub). **As trained, however, it
+is not currently learning a useful signal** — see §4.
 
 ### 2.3 Ensemble — decision logic
 
@@ -87,7 +90,10 @@ unavailable (e.g. TensorFlow not installed), the system falls back to baseline-o
 scoring automatically.
 
 Each result reports `flagged_by` (`baseline`, `lstm`, or `both`) so the analyst can
-see which mechanism triggered the alert, alongside the `reasons` list.
+see which mechanism triggered the alert, alongside the `reasons` list. **Note:**
+given the LSTM's current performance (§4), the OR-based flagging currently *hurts*
+precision at the alert budget rather than helping — see §4 for the numbers and §7
+for the implication.
 
 ---
 
@@ -97,8 +103,8 @@ see which mechanism triggered the alert, alongside the `reasons` list.
 |---|---|---|
 | 1 | Synthetic data generator + attack taxonomy | ✅ Implemented — 500 users, 700 devices, synthetic events with 8 injected attack types |
 | 2 | Baseline profiling model | ✅ Implemented — per-entity statistical profile |
-| 3 | Sequence-aware detection model | ✅ Implemented — real, trained LSTM |
-| 4 | Anomaly-type classification | ✅ Implemented — label encoders in `trained_models/` |
+| 3 | Sequence-aware detection model | ⚠️ Implemented and trained, but not currently learning a useful signal (AUC 0.500 — see §4) |
+| 4 | Anomaly-type classification | ✅ Implemented — label encoders + classifier in `trained_models/` |
 | 5 | Explainability layer | ✅ Implemented — rule-based deviation reasons + `flagged_by` attribution (not SHAP) |
 | 6 | Analyst-facing dashboard | ✅ Implemented — ranked alert queue, risk score, entity history view, model comparison page |
 | 7 | Report | This document |
@@ -107,8 +113,9 @@ see which mechanism triggered the alert, alongside the `reasons` list.
 
 ## 4. Evaluation
 
-**As of this report, `trained_models/evaluation_results.json` may or may not exist**
-depending on whether `python -m src.evaluate_models` has been run. This script:
+Real metrics have been computed by `python -m src.evaluate_models` and are stored in
+`trained_models/evaluation_results.json`, which remains the single source of truth
+and can be regenerated at any time. This script:
 
 - Loads the real, trained `InferenceService` (the same code path the live API uses)
 - Takes a **time-based held-out 20%** slice of `data/raw/cybersecurity_dataset.csv`
@@ -118,18 +125,39 @@ depending on whether `python -m src.evaluate_models` has been run. This script:
 - Computes the specific metric the hackathon brief names explicitly: **false positive
   rate at a top-1% analyst alert budget**
 
-**If `trained_models/evaluation_results.json` exists**, real numbers should be
-inserted here directly from that file rather than restated from memory, since the
-file is the single source of truth and can be regenerated at any time.
+### 4.1 Results (from the latest `evaluation_results.json`)
 
-**If it does not exist yet**, no performance numbers are claimed in this report.
-The `/api/v1/models/performance` endpoint and the frontend Model Comparison page
-both handle this state honestly — the API returns `is_real_data: false` with
-placeholder values, and the frontend displays "⚠ Example metrics — run
-`python -m src.evaluate_models` to compute real ones" rather than presenting
-placeholders as measured results.
+| Model | Precision | Recall | F1 | AUC-ROC |
+|---|---|---|---|---|
+| Baseline | 1.000 | 0.530 | 0.693 | 0.835 |
+| LSTM | 0.034 | 0.006 | 0.010 | 0.500 |
+| Ensemble | 0.814 | 0.530 | 0.642 | 0.833 |
 
-### Known-accurate structural facts (not dependent on evaluation results)
+**Top-1% analyst alert budget (90 alerts):**
+
+| Model | True positives | False positives | FPR at budget |
+|---|---|---|---|
+| Baseline | 90 | 0 | 0.0% |
+| LSTM | 3 | 87 | 96.7% |
+| Ensemble | 68 | 22 | 24.4% |
+
+### 4.2 What these numbers mean
+
+The baseline profiler is doing essentially all of the real detection work. The
+LSTM's AUC of 0.500 means it is not separating attacks from normal behavior any
+better than chance on this dataset — its high recall on paper is not present here
+because it was never a strong classifier to begin with. Because the ensemble uses
+OR-based flagging (§2.3), the LSTM's false positives leak into the ensemble's alert
+budget: the ensemble's FPR (24.4%) is *worse* than the baseline alone (0.0%), even
+though the ensemble's recall matches the baseline's (0.530) since the baseline
+already catches everything the baseline catches. In its current trained state, the
+LSTM is not adding detection value and is actively costing precision at the alert
+budget.
+
+This is reported here rather than smoothed over, per this report's stated
+verification standard. See §7 for the implication and possible next steps.
+
+### Known-accurate structural facts (not dependent on future evaluation runs)
 - Total dataset: 45,000 events, 900 labeled attacks (2.0% attack rate)
 - Feature matrix: 23 raw engineered columns → 57 columns after one-hot expansion for
   LSTM input
@@ -142,11 +170,11 @@ placeholders as measured results.
 
 | Challenge | Status | Detail |
 |---|---|---|
-| Sequential/behavioral data | ✅ Addressed | LSTM sliding 5-event window per entity |
+| Sequential/behavioral data | ✅ Addressed | LSTM sliding 5-event window per entity (architecture correct; current training result is weak — see §4) |
 | Extreme class imbalance | ✅ Addressed | `compute_class_weight("balanced")` at LSTM training time |
 | Explainability | ✅ Addressed | Rule-based deviation reasons + `flagged_by`, surfaced per alert in the dashboard |
-| Cold-start | ✅ Addressed | Unknown entities get a flat fallback baseline score (2.0) rather than crashing or silently passing |
-| Concept drift | ✅ Addressed | A background `DriftMonitor` periodically computes feature drift and triggers retraining (attack-type classifier + baseline profiles) when drift is detected. The retraining workflow is implemented and reloads artifacts into `InferenceService`. |
+| Cold-start | ✅ Addressed | Unknown entities get a flat fallback baseline score (2.0) rather than crashing or silently passing, and `ColdStartService` builds a real profile once enough events accumulate |
+| Concept drift | ⚠️ Partially addressed | A background `DriftMonitor` computes feature-distribution drift on a handful of features and triggers retraining (attack-type classifier + baseline profiles) when a threshold is crossed. This is a basic, unvalidated mechanism — it has not been tested against real drift scenarios and does not cover drift in the LSTM's input distribution. It is a real, working starting point, not a mature production drift-detection system. |
 
 ---
 
@@ -169,15 +197,22 @@ Full mapping and rationale in `ATTACK_TAXONOMY_MAPPING.md`.
 
 ## 7. Known limitations
 
-- **Performance metrics are conditional on running `src/evaluate_models.py`** — see
-  §4. Do not cite specific precision/recall/F1/AUC numbers unless they come directly
-  from a fresh `trained_models/evaluation_results.json`.
-- **Concept drift handling:** a background `DriftMonitor` is present and will trigger retraining workflows (attack-type classifier and baseline profile rebuild) when drift is detected. This provides an automated re-baselining mechanism for the demo.
+- **The LSTM is not currently learning a useful signal** (AUC 0.500, §4). The
+  ensemble's alert-budget precision is worse than the baseline alone as a direct
+  result. Possible next steps: more training epochs, revisiting the feature set fed
+  to the LSTM, a longer or shorter sequence window, or gating the LSTM's
+  contribution to the ensemble by a minimum confidence/validation AUC before it's
+  allowed to independently trigger an alert.
+- **Concept-drift handling is basic, not production-grade.** The `DriftMonitor`
+  (§5) is real and functional but has not been validated against realistic drift
+  scenarios and doesn't cover LSTM input drift specifically.
 - **Attack taxonomy is a simplified proxy** for 2 of 8 patterns (§6).
 - **File-based, batch/on-demand system** — not a real-time streaming service. No
   Kafka/queue ingestion or incremental feature store is implemented; this would be
   required for a production deployment at real-time SOC scale.
-- **Cold-start fallback is a flat score**, not a personalized cold-start model.
+- **Cold-start fallback is a flat score** until the `ColdStartService` accumulates
+  enough events for a real profile, not a personalized cold-start model from the
+  first event.
 - Synthetic data stands in for real access logs; results describe the model's
   ability to separate injected attack patterns from simulated normal behavior, not
   validated traffic from a production environment.
@@ -209,8 +244,14 @@ python -m src.evaluate_models
 
 The system implements a working baseline-profiling + LSTM ensemble with real,
 verified model artifacts and a functioning explainability and dashboard layer,
-directly addressing 4 of the 5 challenges named in the brief. The two areas most
-worth further work before a production claim would be: (1) generating and
-publishing real held-out evaluation numbers via `src/evaluate_models.py`, and
-(2) implementing concept-drift handling, which currently does not exist in the
-codebase.
+addressing all five challenges named in the brief to varying degrees of maturity:
+sequential modeling, class imbalance handling, explainability, and cold-start are
+solidly addressed; concept-drift detection exists and functions but is basic; and
+the LSTM sequence model, while architecturally correct and genuinely trained, is
+not currently contributing useful detection signal (§4).
+
+The two areas most worth further work before a production claim would be:
+(1) improving LSTM training so it contributes positively to the ensemble rather
+than adding noise, and (2) hardening concept-drift detection with validation
+against realistic drift scenarios. Both are called out explicitly rather than
+glossed over, consistent with this report's verification standard.
