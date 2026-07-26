@@ -1,0 +1,58 @@
+{
+  "evaluation_timestamp": "2026-07-26T13:35:22.713716Z",
+  "dataset": {
+    "total_events": 9000,
+    "attacks": 181,
+    "attack_rate": 0.02011111111111111,
+    "split": "time-based 80/20"
+  },
+  "metrics": {
+    "baseline": {
+      "precision": 1.0,
+      "recall": 0.5303867403314917,
+      "f1_score": 0.6931407942238267,
+      "samples_evaluated": 9000,
+      "auc_roc": 0.8354942461623855
+    },
+    "lstm": {
+      "precision": 0.034482758620689655,
+      "recall": 0.0055248618784530384,
+      "f1_score": 0.009523809523809525,
+      "samples_evaluated": 9000,
+      "auc_roc": 0.5001663284758736
+    },
+    "ensemble": {
+      "precision": 0.8135593220338984,
+      "recall": 0.5303867403314917,
+      "f1_score": 0.6421404682274248,
+      "samples_evaluated": 9000,
+      "auc_roc": 0.8334168630136214
+    }
+  },
+  "alert_budget_evaluation": {
+    "baseline": {
+      "alerts_raised": 90,
+      "true_positives": 90,
+      "false_positives": 0,
+      "false_positive_rate_at_budget": 0.0,
+      "budget_size": 90
+    },
+    "lstm": {
+      "alerts_raised": 90,
+      "true_positives": 3,
+      "false_positives": 87,
+      "false_positive_rate_at_budget": 0.9666666666666667,
+      "budget_size": 90
+    },
+    "ensemble": {
+      "alerts_raised": 90,
+      "true_positives": 68,
+      "false_positives": 22,
+      "false_positive_rate_at_budget": 0.24444444444444444,
+      "budget_size": 90
+    }
+  },
+  "flags": {
+    "lstm_available": true
+  }
+}

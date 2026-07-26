@@ -164,6 +164,19 @@ async def get_model_performance():
     Returns validation metrics for trained models
     """
     try:
+        try:
+            if os.path.exists(settings.EVALUATION_RESULTS):
+                with open(settings.EVALUATION_RESULTS, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return {
+                    "status": "success",
+                    "data": data.get("metrics", {}),
+                    "evaluation_timestamp": data.get("evaluation_timestamp"),
+                    "source": "trained_models/evaluation_results.json"
+                }
+        except Exception as e:
+            logger.warning(f"Could not load evaluation results: {e}")
+
         return {
             "status": "success",
             "data": {
@@ -200,7 +213,8 @@ async def get_model_performance():
                     "training_split": 0.8,
                     "validation_split": 0.2
                 }
-            }
+            },
+            "note": "Example metrics are returned until evaluation_results.json is generated"
         }
         
     except Exception as e:

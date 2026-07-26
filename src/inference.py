@@ -109,6 +109,7 @@ def predict(event_features: pd.DataFrame):
                 "attack_type": "Anomalous",
                 "flagged_by": primary_detector,
                 "confidence": float(ensemble_confidence),
+                "risk_score": float(ensemble_confidence),
                 "baseline_score": baseline_score,
                 "baseline_reasons": baseline_results[i]['baseline_reasons']
             }
@@ -119,7 +120,8 @@ def predict(event_features: pd.DataFrame):
             results.append({
                 "status": "Normal",
                 "baseline_score": baseline_score,
-                "confidence": 1.0 - float(ensemble_confidence)
+                "confidence": 1.0 - float(ensemble_confidence),
+                "risk_score": float(ensemble_confidence)
             })
 
     return results

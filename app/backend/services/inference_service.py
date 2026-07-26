@@ -13,7 +13,15 @@ import sys
 import os
 from collections import defaultdict
 
+from pathlib import Path
+
+repo_root = Path(__file__).resolve().parents[3]
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
 from ..config import settings
+from src.attack_type_classifier import load_attack_type_assets, predict_attack_type
+from src.attack_type_classifier import load_attack_type_assets, predict_attack_type
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +68,18 @@ class InferenceService:
         self.scaler = None
         self.feature_columns = None
         self.lstm_feature_columns = None  # LSTM-specific 57-feature columns (one-hot expanded)
+        self.attack_type_model, self.attack_type_encoder, self.attack_type_cat_encoders, self.attack_type_feature_columns = load_attack_type_assets()
         self.models_loaded = False
+        self.cold_start_entities: set[str] = set()
+        # COLD_START_MIN_EVENTS may live in src/config.py for training/runtime defaults — fall back if missing
+        try:
+            self.cold_start_min_events = settings.COLD_START_MIN_EVENTS
+        except Exception:
+            try:
+                from src.config import COLD_START_MIN_EVENTS
+                self.cold_start_min_events = COLD_START_MIN_EVENTS
+            except Exception:
+                self.cold_start_min_events = 3
         
         # Entity event buffer: maps entity_id -> list of last WINDOW_SIZE feature vectors
         self.entity_event_buffer = defaultdict(lambda: [])
@@ -187,6 +206,28 @@ class InferenceService:
                 baseline_reasons,
                 lstm_confidence
             )
+            if event_data.get('entity_id') and event_data.get('entity_id') not in self.baseline_profiles:
+                self.cold_start_entities.add(str(event_data.get('entity_id')))
+            if self.attack_type_model is not None and self.attack_type_encoder is not None and self.attack_type_cat_encoders is not None and self.attack_type_feature_columns is not None:
+                predicted_attack_type = predict_attack_type(
+                    event_data,
+                    self.attack_type_model,
+                    self.attack_type_encoder,
+                    self.attack_type_cat_encoders,
+                    self.attack_type_feature_columns,
+                )
+                if predicted_attack_type:
+                    result['attack_type'] = predicted_attack_type
+            if self.attack_type_model is not None and self.attack_type_encoder is not None and self.attack_type_cat_encoders is not None and self.attack_type_feature_columns is not None:
+                predicted_attack_type = predict_attack_type(
+                    event_data,
+                    self.attack_type_model,
+                    self.attack_type_encoder,
+                    self.attack_type_cat_encoders,
+                    self.attack_type_feature_columns,
+                )
+                if predicted_attack_type:
+                    result['attack_type'] = predicted_attack_type
             
             return result
             
@@ -515,16 +556,16 @@ class InferenceService:
     def _infer_attack_type(self, event_data: Dict[str, Any], baseline_score: float, lstm_confidence: Optional[float]) -> str:
         """Infer a likely attack type for display"""
         if event_data.get('failed_login_attempts', 0) >= 5:
-            return 'brute_force'
+            return 'Brute Force'
         if event_data.get('geo_location') and event_data.get('geo_location') not in event_data.get('normal_location', ''):
-            return 'impossible_travel'
+            return 'Impossible Travel'
         if event_data.get('resource_accessed') in ['Finance DB', 'Internal Server', 'Database'] and baseline_score > 1.0:
-            return 'lateral_movement'
+            return 'Lateral Movement'
         if event_data.get('session_duration', 0) >= 1800:
-            return 'long_session'
+            return 'Long Session'
         if lstm_confidence and lstm_confidence > 0.8:
-            return 'credential_stuffing'
-        return 'unknown'
+            return 'Credential Stuffing'
+        return 'Unknown'
     
     def _error_response(self, event_data: Dict[str, Any], error: str) -> Dict[str, Any]:
         """Create error response"""

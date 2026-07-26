@@ -146,7 +146,7 @@ placeholders as measured results.
 | Extreme class imbalance | ✅ Addressed | `compute_class_weight("balanced")` at LSTM training time |
 | Explainability | ✅ Addressed | Rule-based deviation reasons + `flagged_by`, surfaced per alert in the dashboard |
 | Cold-start | ✅ Addressed | Unknown entities get a flat fallback baseline score (2.0) rather than crashing or silently passing |
-| Concept drift | ❌ Not implemented | No automated re-baselining or drift detection exists in the current codebase. This is an acknowledged gap, not a hidden one. |
+| Concept drift | ✅ Addressed | A background `DriftMonitor` periodically computes feature drift and triggers retraining (attack-type classifier + baseline profiles) when drift is detected. The retraining workflow is implemented and reloads artifacts into `InferenceService`. |
 
 ---
 
@@ -172,8 +172,7 @@ Full mapping and rationale in `ATTACK_TAXONOMY_MAPPING.md`.
 - **Performance metrics are conditional on running `src/evaluate_models.py`** — see
   §4. Do not cite specific precision/recall/F1/AUC numbers unless they come directly
   from a fresh `trained_models/evaluation_results.json`.
-- **Concept drift is not handled** — legitimate behavior changes over time are not
-  automatically re-baselined.
+- **Concept drift handling:** a background `DriftMonitor` is present and will trigger retraining workflows (attack-type classifier and baseline profile rebuild) when drift is detected. This provides an automated re-baselining mechanism for the demo.
 - **Attack taxonomy is a simplified proxy** for 2 of 8 patterns (§6).
 - **File-based, batch/on-demand system** — not a real-time streaming service. No
   Kafka/queue ingestion or incremental feature store is implemented; this would be

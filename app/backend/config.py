@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     FEATURE_COLUMNS: str = os.path.join(MODELS_DIR, "feature_columns.pkl")
     LSTM_FEATURE_COLUMNS: str = os.path.join(MODELS_DIR, "lstm_feature_columns.pkl")
     SCALER: str = os.path.join(MODELS_DIR, "scaler.pkl")
+    EVALUATION_RESULTS: str = os.path.join(MODELS_DIR, "evaluation_results.json")
     
     # Model parameters
     BASELINE_WEIGHT: float = 0.4

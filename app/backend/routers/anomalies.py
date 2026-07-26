@@ -73,6 +73,13 @@ async def detect_anomaly(
         anomaly_counter += 1
         result['anomaly_id'] = f"ANO-{anomaly_counter}"
         anomaly_store.append(result)
+        # If this event's entity is new, add to cold-start buffer if available
+        try:
+            cs = getattr(inference_service, 'cold_start_service', None)
+            if cs and event_data.get('entity_id'):
+                cs.add_event(str(event_data.get('entity_id')), event_data)
+        except Exception:
+            logger.exception('Failed to enqueue event for cold-start onboarding')
         
         # Convert to response model
         return InferenceResponse(

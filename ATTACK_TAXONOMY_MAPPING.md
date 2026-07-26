@@ -80,6 +80,13 @@ verified implementation.
 proxies rather than the brief's literal multi-day/multi-session versions — see
 above for exactly what differs and why.
 
+## Attack-type classifier artifact
+
+An attack-type classifier was trained from labeled attack rows and saved to
+`trained_models/attack_type_classifier.pkl`; the backend loads this artifact at
+startup (if present) and uses it to populate the `attack_type` field on
+inference responses for analyst context.
+
 **Note for reviewers:** detection accuracy per attack type is intentionally not
 included in this document. Those numbers only exist once
 `python -m src.evaluate_models` has been run against real held-out data (see

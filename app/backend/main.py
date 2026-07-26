@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import threading
 import logging
 from typing import Optional
 
@@ -14,6 +15,8 @@ from .config import settings
 from .services.inference_service import InferenceService
 from .services.alert_service import AlertService
 from .services.data_service import DataService
+from .services.drift_monitor import DriftMonitor
+from .services.cold_start_service import ColdStartService
 from .routers import (
     anomalies,
     alerts,
@@ -49,6 +52,31 @@ async def lifespan(app: FastAPI):
         alert_service = AlertService(data_service)
         alert_service.seed_initial_alerts()
         logger.info("✅ Services initialized successfully")
+        # Start background services: drift monitor and cold-start worker
+        try:
+            drift_monitor = DriftMonitor(data_service, inference_service, check_interval=60*60)
+            drift_thread = threading.Thread(target=drift_monitor.run_loop, daemon=True)
+            drift_thread.start()
+            logger.info("🔁 Drift monitor started")
+            # attach to inference service for visibility
+            try:
+                inference_service.drift_monitor = drift_monitor
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("Failed to start drift monitor")
+
+        try:
+            cold_start = ColdStartService(inference_service, data_service)
+            cold_thread = threading.Thread(target=cold_start.run_loop, daemon=True)
+            cold_thread.start()
+            logger.info("🔁 Cold-start worker started")
+            try:
+                inference_service.cold_start_service = cold_start
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("Failed to start cold-start worker")
     except Exception as e:
         logger.error(f"❌ Failed to initialize services: {e}")
         raise
