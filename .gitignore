@@ -52,3 +52,12 @@ app/frontend/build/
 # baseline_profile.pkl, scaler.pkl, feature_columns.pkl) and
 # processed datasets get committed and are available to anyone
 # who clones the repo.
+# Virtual environments
+.venv/
+.venv311/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
