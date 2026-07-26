@@ -1,4 +1,9 @@
-# Anomaly Detection Project Report - Final Implementation
+---
+DRAFT: This document is an early project report and has been superseded by `FINAL_REPORT.md`.
+See `FINAL_REPORT.md` for the official deliverable intended for judges.
+---
+
+# Anomaly Detection Project Report - Final Implementation (DRAFT)
 
 ## Executive Summary
 
@@ -42,7 +47,7 @@ This project delivers a **production-ready anomaly detection system** combining 
 ✅ **Complete**: Ensemble scoring with weighted voting  
 ✅ **Complete**: Real-time inference API (FastAPI backend)  
 ✅ **Complete**: Interactive dashboard (React frontend)  
-✅ **Complete**: SHAP-based explainability layer  
+✅ **Complete**: Per-alert reason generation and model attribution (`flagged_by`: baseline/lstm/both)
 ✅ **Complete**: 8 distinct attack behavior simulations  
 ✅ **Complete**: Per-entity behavioral profiling  
 ✅ **Complete**: Alert ranking and severity classification  
