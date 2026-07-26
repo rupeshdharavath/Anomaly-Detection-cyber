@@ -19,7 +19,8 @@ from .routers import (
     alerts,
     analytics,
     entities,
-    health
+    health,
+    models
 )
 
 # Configure logging
@@ -83,6 +84,7 @@ app.include_router(anomalies.router, prefix="/api/v1/anomalies", tags=["Anomalie
 app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["Alerts"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
 app.include_router(entities.router, prefix="/api/v1/entities", tags=["Entities"])
+app.include_router(models.router, prefix="/api/v1/models", tags=["Models"])
 
 
 # Exception handlers

@@ -1,12 +1,45 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import StatCard from '../components/StatCard';
+import { modelsAPI } from '../api/client';
+
+const fallbackModels = [
+  { name: 'Baseline', precision: 0.92, recall: 0.88, f1: 0.90, auc: 0.95 },
+  { name: 'LSTM', precision: 0.88, recall: 0.93, f1: 0.90, auc: 0.94 },
+  { name: 'Ensemble', precision: 0.94, recall: 0.91, f1: 0.92, auc: 0.96 },
+];
 
 const ModelComparisonPage = () => {
-  const models = [
-    { name: 'Baseline', precision: 0.92, recall: 0.88, f1: 0.90, auc: 0.95 },
-    { name: 'LSTM', precision: 0.88, recall: 0.93, f1: 0.90, auc: 0.94 },
-    { name: 'Ensemble', precision: 0.94, recall: 0.91, f1: 0.92, auc: 0.96 },
-  ];
+  const [models, setModels] = useState(fallbackModels);
+  const [dataSource, setDataSource] = useState('example');
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchPerformance = async () => {
+      try {
+        const res = await modelsAPI.getPerformance();
+        const payload = res.data;
+        // Expected shape: { data: { baseline: {...}, lstm: {...}, ensemble: {...} } }
+        if (payload && payload.data && mounted) {
+          const { baseline, lstm, ensemble } = payload.data;
+          if (baseline && lstm && ensemble) {
+            setModels([
+              { name: 'Baseline', ...baseline },
+              { name: 'LSTM', ...lstm },
+              { name: 'Ensemble', ...ensemble },
+            ]);
+            setDataSource('real');
+            return;
+          }
+        }
+        setDataSource('example');
+      } catch (err) {
+        console.warn('Model performance API unavailable, using example metrics', err);
+        setDataSource('example');
+      }
+    };
+    fetchPerformance();
+    return () => { mounted = false; };
+  }, []);
 
   return (
     <div className="min-h-screen bg-transparent text-slate-100 p-6">
@@ -14,6 +47,9 @@ const ModelComparisonPage = () => {
         <div>
           <h1 className="text-3xl font-bold text-white">Model Comparison</h1>
           <p className="text-slate-300 mt-2">Performance metrics for the baseline, LSTM, and ensemble models.</p>
+          <p className={`mt-2 text-sm ${dataSource === 'real' ? 'text-green-400' : 'text-yellow-400'}`}>
+            {dataSource === 'real' ? '✓ Metrics from held-out test set' : '⚠ Example metrics (API unavailable)'}
+          </p>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
