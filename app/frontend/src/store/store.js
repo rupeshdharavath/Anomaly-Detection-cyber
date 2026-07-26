@@ -143,10 +143,20 @@ export const useStore = create((set, get) => ({
         tsPoints = tsPayload.points;
       }
 
+      // Ensure each point has expected keys and sort by timestamp
+      const normalizedPoints = (tsPoints || [])
+        .map((p) => ({
+          timestamp: p.timestamp || p.hour || p.hour?.toString?.() || p["hour"] || null,
+          value: typeof p.value === 'number' ? p.value : Number(p.count || 0),
+          risk_score: typeof p.risk_score === 'number' ? p.risk_score : Number(p.risk_score || 0),
+        }))
+        .filter((p) => p.timestamp !== null)
+        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
       set({
         analytics: {
           overview: overview.data,
-          timeSeries: { points: tsPoints },
+          timeSeries: { points: normalizedPoints },
           performance: performance.data,
         },
         loading: false,

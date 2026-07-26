@@ -101,14 +101,25 @@ const Dashboard = () => {
               {(() => {
                 const ts = analytics?.timeSeries;
                 const points = Array.isArray(ts) ? ts : ts?.points || [];
+                // Debug: log points when available
+                if (points && points.length > 0) {
+                  // eslint-disable-next-line no-console
+                  console.debug('Anomalies time series points:', points);
+                  return (
+                    <LineChart data={points}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.2)" />
+                      <XAxis dataKey="timestamp" stroke="rgb(148,163,184)" />
+                      <YAxis stroke="rgb(148,163,184)" />
+                      <Tooltip contentStyle={{ backgroundColor: 'rgba(15,23,42,0.8)', border: '1px solid rgba(71,85,105,0.5)' }} />
+                      <Line type="monotone" dataKey="value" stroke="#3b82f6" dot={false} />
+                    </LineChart>
+                  );
+                }
+
                 return (
-                  <LineChart data={points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,0.2)" />
-                    <XAxis dataKey="timestamp" stroke="rgb(148,163,184)" />
-                    <YAxis stroke="rgb(148,163,184)" />
-                    <Tooltip contentStyle={{ backgroundColor: 'rgba(15,23,42,0.8)', border: '1px solid rgba(71,85,105,0.5)' }} />
-                    <Line type="monotone" dataKey="value" stroke="#3b82f6" dot={false} />
-                  </LineChart>
+                  <div className="flex items-center justify-center h-full text-slate-400">
+                    No time-series data available
+                  </div>
                 );
               })()}
             </ResponsiveContainer>
