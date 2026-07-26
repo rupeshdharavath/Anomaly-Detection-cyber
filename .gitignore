@@ -1,63 +1,89 @@
+# =========================
 # Python
+# =========================
 __pycache__/
 *.py[cod]
 *$py.class
 .python-version
+
+# Virtual Environments
 venv/
 .venv/
+.venv311/
 env/
 ENV/
+
+# Build
 build/
 dist/
 *.egg-info/
 *.egg
 
+# =========================
 # Jupyter
+# =========================
 .ipynb_checkpoints/
 
-# macOS
+# =========================
+# Operating System
+# =========================
 .DS_Store
-
-# Windows
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# =========================
 # VS Code
+# =========================
 .vscode/
 *.code-workspace
 
-# Node
+# =========================
+# Node.js
+# =========================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 package-lock.json
 
-# Generated frontend build
+# Frontend Build
 app/frontend/build/
+app/frontend/dist/
 
+# =========================
 # Logs
+# =========================
 *.log
-
-# Pytest
 .cache/
 
-# Local environment / credentials
+# =========================
+# Environment Variables
+# =========================
 .env
 .env.*
 
-# NOTE: trained_models/ and data/processed/ are intentionally
-# NOT ignored anymore, so model artifacts (lstm_model.keras,
-# baseline_profile.pkl, scaler.pkl, feature_columns.pkl) and
-# processed datasets get committed and are available to anyone
-# who clones the repo.
-# Virtual environments
-.venv/
-.venv311/
-venv/
-env/
+# =========================
+# Data (Ignore Large Files)
+# =========================
+data/raw/
+data/processed/
 
-# Python
-__pycache__/
-*.pyc
+# If you need sample datasets, uncomment:
+# !data/raw/sample.csv
+
+# =========================
+# Trained Models
+# =========================
+trained_models/
+*.keras
+*.h5
+*.pkl
+*.joblib
+*.onnx
+
+# =========================
+# Temporary Files
+# =========================
+*.tmp
+*.bak
