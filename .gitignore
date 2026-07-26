@@ -87,3 +87,6 @@ trained_models/
 # =========================
 *.tmp
 *.bak
+
+# Ignore all Markdown files
+*.md
